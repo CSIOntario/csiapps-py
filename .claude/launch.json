@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "example-app",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "shiny", "run", "--port", "8123", "examples/app.py"],
+      "port": 8123
+    }
+  ]
+}

@@ -1,12 +1,12 @@
-"""Ported from tests/testthat/test-sandbox-wrapper.R (ui_wrapper, server_wrapper,
-global_wrapper). The deep reactive-session cases (simulated-login flushReact)
-have no simple Shiny-for-Python equivalent, so the sandbox seeding + auth-status
-logic is covered through the extracted pure helpers instead.
+"""Ported from tests/testthat/test-sandbox-wrapper.R (ui_wrapper, server_wrapper).
+The deep reactive-session cases (simulated-login flushReact) have no simple
+Shiny-for-Python equivalent, so the sandbox seeding + auth-status logic is
+covered through the extracted pure helpers instead.
 """
 
 from shiny import ui
 
-from csiapps import app, global_wrapper, server_wrapper, set_institute, ui_wrapper
+from csiapps import app, server_wrapper, set_institute, ui_wrapper
 
 # ---- ui_wrapper --------------------------------------------------------
 
@@ -65,11 +65,3 @@ def test_signed_in_text_variants():
     signed = app._signed_in_text({"first_name": "Ada", "last_name": "L"}, False)
     assert signed == "Signed in as Ada L"
     assert app._signed_in_text(None, True) == "Signed in (sandbox)"
-
-
-# ---- global_wrapper ----------------------------------------------------
-
-
-def test_global_wrapper_runs_callable_and_passes_through():
-    assert global_wrapper(lambda: 42) == 42
-    assert global_wrapper(7) == 7

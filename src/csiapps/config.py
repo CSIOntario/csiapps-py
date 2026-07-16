@@ -10,12 +10,19 @@ R global. There is only ever one configuration per process.
 """
 
 import os
+import sys
 
 # ---- Warehouse / registration endpoint constants ----
 SPORT_ORG_ENDPOINT = "/api/registration/organization/"
 PROFILE_ENDPOINT = "/api/registration/profile/"
 
 _VALID_INSTITUTES = ("csipacific", "csiontario")
+
+
+def _message(text: str) -> None:
+    # Informational output to stderr (mirrors R's message()), keeping stdout clean
+    # for actual return values. Shared by auth.py and sandbox.py.
+    print(text, file=sys.stderr)
 
 # `sandbox_override` mirrors the R `csiapps.sandbox` option: None means "unset,
 # fall back to CSIAPPS_ENV"; anything else forces the mode (see is_sandbox_mode).
@@ -87,8 +94,3 @@ def is_sandbox_mode() -> bool:
     if env:
         return env != "production"
     return True
-
-
-def clear_token() -> None:
-    """Remove the process-wide ``CSIAPPS_ACCESS_TOKEN`` environment variable."""
-    os.environ.pop("CSIAPPS_ACCESS_TOKEN", None)

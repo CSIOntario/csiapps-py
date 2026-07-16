@@ -16,7 +16,6 @@ from csiapps.client import (
     fetch_profile,
     fetch_profiles,
     flatten_profile,
-    flatten_record,
     make_request,
 )
 
@@ -123,6 +122,45 @@ def test_fetch_profiles_accumulates_pages():
     assert [p["id"] for p in profiles] == [1, 2]
 
 
+@respx.mock
+def test_fetch_profiles_bounds_runaway_pagination():
+    # A misbehaving server whose `next` never terminates must not hang the app in
+    # an unbounded loop; pagination is capped by max_pages.
+    url = f"{SITE}{config.PROFILE_ENDPOINT}"
+    call_count = {"n": 0}
+
+    def _never_ending(request):
+        call_count["n"] += 1
+        n = call_count["n"]
+        return httpx.Response(
+            200, json={"results": [{"id": n}], "next": f"{url}?page={n + 1}"}
+        )
+
+    respx.get(url__startswith=url).mock(side_effect=_never_ending)
+    with pytest.warns(UserWarning, match="truncated"):
+        profiles = fetch_profiles(token="tok", sandbox=False, max_pages=5)
+    assert len(profiles) == 5
+    assert call_count["n"] == 5
+
+
+@respx.mock
+def test_fetch_profiles_stops_on_cycled_next():
+    # If the server cycles `next` back to a URL already fetched, stop rather than
+    # loop forever.
+    url = f"{SITE}{config.PROFILE_ENDPOINT}"
+    page2 = f"{url}?page=2"
+
+    def _cycle(request):
+        if str(request.url) == page2:
+            return httpx.Response(200, json={"results": [{"id": 2}], "next": str(request.url)})
+        return httpx.Response(200, json={"results": [{"id": 1}], "next": page2})
+
+    respx.get(url__startswith=url).mock(side_effect=_cycle)
+    profiles = fetch_profiles(token="tok", sandbox=False, max_pages=50)
+    # page1 -> id 1 (next=page2), page2 -> id 2 (next=page2, already seen -> stop)
+    assert [p["id"] for p in profiles] == [1, 2]
+
+
 # ---- fetch_profile ----
 
 
@@ -157,21 +195,3 @@ def test_flatten_profile_is_scalar_row():
         "status": "ACTIVE",
     }
     assert all(not isinstance(v, (dict, list)) for v in row.values())
-
-
-def test_flatten_record_resolved_and_unresolved_subject():
-    resolved = flatten_record(
-        {
-            "id": 1,
-            "dataset_uuid": "d1",
-            "data": {"k": "v"},
-            "subject": {"first_name": "Ada", "last_name": "L", "sport": {"name": "Rowing"}},
-            "created_at": "t",
-        }
-    )
-    assert resolved["profile"] == "Ada L"
-    assert resolved["sport"] == "Rowing"
-
-    unresolved = flatten_record({"id": 2, "data": {"k": "v"}, "subject": None})
-    assert unresolved["profile"] == "-"
-    assert unresolved["sport"] is None

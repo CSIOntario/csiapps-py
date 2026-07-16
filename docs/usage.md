@@ -47,9 +47,9 @@ ui.input_select("org", "Organisation", choices=csiapps.fetch_org_options())
 
 ## Showing results in a table
 
-`fetch_profiles()` / data-records return deeply nested dicts. Flatten them to
-scalar rows with `flatten_profile` / `flatten_record`, then wrap in a DataFrame
-(pandas or polars — your dashboard's choice, not a `csiapps` dependency):
+`fetch_profiles()` returns deeply nested dicts. Flatten them to scalar rows with
+`flatten_profile`, then wrap in a DataFrame (pandas or polars — your dashboard's
+choice, not a `csiapps` dependency):
 
 ```python
 import pandas as pd

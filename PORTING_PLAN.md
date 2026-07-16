@@ -60,8 +60,9 @@ Two-tier token resolution `.current_token()`: per-session token first, then
 `sandbox_ingest`. Keep **read-time** subject resolution so athletes registered
 after ingestion backfill.
 
-**app.py** — `ui_wrapper`, `server_wrapper`, `global_wrapper`, navbar/footer/CSS
-chrome, sandbox banner, `/me` load, logout re-seed.
+**app.py** — `ui_wrapper`, `server_wrapper`, navbar/footer/CSS chrome, sandbox
+banner, `/me` load, logout re-seed. (`global_wrapper` was ported then dropped in
+the ponytail audit — a no-op in Python; module scope covers the R use case.)
 
 ### Shiny R → Shiny for Python
 
@@ -155,13 +156,20 @@ issues from common workflows, all fixed:
    crashed `ui.input_select` (`TypeError: unhashable type: 'dict'`). Now returns
    a `{value: label}` dict that feeds `input_select(choices=...)` directly.
    Deliberate divergence from R (whose shape suited `selectInput`).
-2. **No path from nested results to a table** — `fetch_profiles`/data-records
-   return deeply nested dicts; `render.DataGrid` rejected them
-   ("Unsupported dataframe type"). Added `flatten_profile` / `flatten_record`
-   (the latter un-skips the R internal) producing scalar rows; docs show wrapping
-   in a pandas/polars frame (kept out of package deps).
+2. **No path from nested results to a table** — `fetch_profiles` returns deeply
+   nested dicts; `render.DataGrid` rejected them ("Unsupported dataframe type").
+   Added `flatten_profile` producing scalar rows; docs show wrapping in a
+   pandas/polars frame (kept out of package deps).
 3. **Fixed-bottom footer overlapped content** — the R wrapper's
    `padding-bottom: 80px` was dropped in the port; restored in `ui_wrapper`.
+
+## Ponytail audit cleanup
+
+Repo-wide over-engineering pass, all applied: dropped `global_wrapper` (no-op in
+Python) and `flatten_record` (no caller; only `flatten_profile` is used); deleted
+`config.clear_token` (dead) and `tests/test_smoke.py` (redundant vs 78 real
+tests); hoisted the duplicated `_message` helper into `config`; inlined the
+`_rmtree` wrapper to `shutil.rmtree`. ~55 lines removed, no dep changes.
 
 ## Parity caveats carried over from R
 

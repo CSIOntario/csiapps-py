@@ -10,17 +10,16 @@ across the porting phases (see ``PORTING_PLAN.md``):
 * ``auth``    -- check_secrets, PKCE, token exchange       (phase 2)
 * ``client``  -- make_request, fetch_org_options/profiles  (phase 3)
 * ``sandbox`` -- register_sandbox_schema, create_*, ...     (phase 4)
-* ``app``     -- ui_wrapper, server_wrapper, global_wrapper (phase 5)
+* ``app``     -- ui_wrapper, server_wrapper                 (phase 5)
 """
 
-from .app import global_wrapper, server_wrapper, ui_wrapper
+from .app import server_wrapper, ui_wrapper
 from .auth import check_secrets
 from .client import (
     fetch_org_options,
     fetch_profile,
     fetch_profiles,
     flatten_profile,
-    flatten_record,
     make_request,
 )
 from .config import is_sandbox_mode, set_institute, set_sandbox_mode
@@ -45,8 +44,6 @@ __all__ = [
     "fetch_profile",
     "fetch_profiles",
     "flatten_profile",
-    "flatten_record",
-    "global_wrapper",
     "is_sandbox_mode",
     "make_request",
     "register_sandbox_schema",

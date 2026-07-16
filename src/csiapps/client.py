@@ -223,11 +223,16 @@ def fetch_org_options(token=None, sandbox=None):
     return {}
 
 
-def fetch_profiles(token=None, filters=None, sandbox=None):
+def fetch_profiles(token=None, filters=None, sandbox=None, max_pages=50):
     """Fetch all profiles accessible to the token, auto-paginating.
 
     ``filters`` is a dict of query parameters (e.g. ``{"sport_org_id": 42}``).
     In sandbox mode only ``sport_org_id`` is honoured.
+
+    Pagination is bounded by ``max_pages`` (default 50, matching
+    :func:`make_request`) and terminates if the server ever repeats a ``next``
+    URL, so a misbehaving or hostile server can't hang the app in an unbounded
+    loop with unbounded memory growth.
     """
     if filters is None:
         filters = {}
@@ -251,7 +256,11 @@ def fetch_profiles(token=None, filters=None, sandbox=None):
 
     out = []
     next_url = url
-    while next_url:
+    seen = set()
+    for _ in range(max_pages):
+        if next_url in seen:  # server cycled `next` back to a page we already fetched
+            break
+        seen.add(next_url)
         resp = _perform("GET", next_url, params=params, headers=headers)
         if resp.status_code >= 400:
             raise RuntimeError(f"fetch_profiles failed ({resp.status_code}): {resp.text}")
@@ -259,6 +268,20 @@ def fetch_profiles(token=None, filters=None, sandbox=None):
         out.extend(payload.get("results") or [])
         next_url = payload.get("next")
         params = None  # `next` already carries its query
+        if not next_url:
+            break
+    else:
+        # Loop hit max_pages with more pages still advertised. Warn loudly rather
+        # than silently truncate, so a genuinely large result is never dropped
+        # without notice (raise max_pages to fetch the rest).
+        if next_url:
+            import warnings
+
+            warnings.warn(
+                f"fetch_profiles: stopped after max_pages={max_pages}; results may be "
+                f"truncated. Pass a larger max_pages to fetch all profiles.",
+                stacklevel=2,
+            )
     return out
 
 
@@ -290,38 +313,10 @@ def fetch_profile(profile_id, token=None, sandbox=None):
     return resp.json()
 
 
-# ---- flattening helpers (nested API objects -> flat, tabular rows) ------
-# fetch_profiles()/data-records return deeply nested dicts; passing them
-# straight to a Shiny data frame fails ("Unsupported dataframe type"). These
-# flatten one object to scalar fields so a list of them builds a table (wrap in
+# fetch_profiles() returns deeply nested dicts; passing them straight to a Shiny
+# data frame fails ("Unsupported dataframe type"). flatten_profile turns one
+# profile into scalar fields so a list of them builds a table (wrap in
 # pandas/polars for render.data_frame).
-
-
-def flatten_record(rec):
-    """Flatten a warehouse data record into scalar fields plus its ``data`` payload.
-
-    Port of the R ``flatten_record``. ``profile`` is the resolved subject's
-    display name (``"-"`` when unresolved); ``data`` stays nested.
-    """
-    subject = rec.get("subject")
-    subject_label = "-"
-    sport = None
-    if subject:
-        first = subject.get("first_name") or ""
-        last = subject.get("last_name") or ""
-        subject_label = f"{first} {last}".strip() or "-"
-        sport = (subject.get("sport") or {}).get("name")
-    return {
-        "id": rec.get("uuid") or rec.get("id"),
-        "dataset_uuid": rec.get("dataset_uuid"),
-        "profile": subject_label,
-        "created_at": rec.get("created_at"),
-        "updated_at": rec.get("updated_at"),
-        "sport": sport,
-        "data": rec.get("data") or {},
-    }
-
-
 def flatten_profile(p):
     """Flatten a registration profile into a scalar row for tables/selection."""
     person = p.get("person") or {}

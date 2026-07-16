@@ -12,18 +12,11 @@ import json
 import os
 import re
 import secrets
-import sys
 
 import httpx
 
 from . import config
-
-
-def _message(text: str) -> None:
-    # Mirror R's message(): informational output goes to stderr, keeping stdout
-    # clean for actual return values.
-    print(text, file=sys.stderr)
-
+from .config import _message
 
 # ---- PKCE base64url ----
 

@@ -1,8 +1,8 @@
 """Shiny for Python wrappers for CSIAPPS apps.
 
 Port of ``R/shiny.R``: ``ui_wrapper`` (consistent navbar/footer chrome + auth
-status + sandbox banner), ``server_wrapper`` (OAuth2 PKCE login, or a simulated
-login in sandbox mode), and ``global_wrapper``.
+status + sandbox banner) and ``server_wrapper`` (OAuth2 PKCE login, or a
+simulated login in sandbox mode).
 
 Framework mapping notes (R Shiny -> Shiny for Python):
 
@@ -18,6 +18,7 @@ Framework mapping notes (R Shiny -> Shiny for Python):
   messages are ``async``.
 """
 
+import asyncio
 import os
 from urllib.parse import parse_qs, urlencode
 
@@ -36,19 +37,6 @@ Shiny.addCustomMessageHandler('csip_reset', function(x) {
   window.location.href = window.location.pathname;
 });
 """
-
-
-def global_wrapper(code):
-    """Run app setup code so its definitions are visible to the server.
-
-    In R this evaluated a code block in the global environment so ``server`` could
-    see it. Python module scope already provides that, so this simply invokes a
-    setup callable (if given) and returns its result.
-
-    ponytail: near no-op in Python -- module-level ``x = ...`` covers the R use
-    case. Kept for API parity.
-    """
-    return code() if callable(code) else code
 
 
 # ---- chrome (navbar / footer / styles) ---------------------------------
@@ -238,7 +226,13 @@ def server_wrapper(app_specific_logic, sandbox=None):
                 # 2) have code but no token yet -> exchange
                 if code is not None and user_token() is None:
                     verifier = auth.pkce_state_decode(state).get("v") if state else None
-                    user_token.set(auth.exchange_code_for_token(code, code_verifier=verifier))
+                    # exchange_code_for_token does a *blocking* httpx.post; run it
+                    # off the event loop so a slow token endpoint can't stall every
+                    # other session (a Python-only concern -- R has no shared loop).
+                    tok = await asyncio.to_thread(
+                        auth.exchange_code_for_token, code, verifier
+                    )
+                    user_token.set(tok)
 
         # Shared consumer (production + sandbox): store the token per-session and
         # load /me for the header.
@@ -261,8 +255,12 @@ def server_wrapper(app_specific_logic, sandbox=None):
             userinfo_url = config.userinfo_url()
             if userinfo_url:
                 try:
-                    resp = httpx.get(
-                        userinfo_url, headers={"Authorization": f"Bearer {access_token}"}
+                    # Blocking httpx.get -> run off the event loop so a slow /me
+                    # endpoint can't stall other sessions (Python-only concern).
+                    resp = await asyncio.to_thread(
+                        httpx.get,
+                        userinfo_url,
+                        headers={"Authorization": f"Bearer {access_token}"},
                     )
                     resp.raise_for_status()
                     userinfo.set(resp.json())

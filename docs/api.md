@@ -31,4 +31,3 @@ Everything exported from the top-level `csiapps` package.
 
 ::: csiapps.app.ui_wrapper
 ::: csiapps.app.server_wrapper
-::: csiapps.app.global_wrapper

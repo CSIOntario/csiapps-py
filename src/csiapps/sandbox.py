@@ -18,7 +18,7 @@ import os
 import random
 import re
 import secrets
-import sys
+import shutil
 import tempfile
 import warnings
 import webbrowser
@@ -27,6 +27,7 @@ from datetime import date, datetime, timedelta, timezone
 from jsonschema import Draft7Validator
 
 from . import config
+from .config import _message
 
 # ---- session state (mirror of R's .sandbox_env) ----
 _state = {
@@ -36,10 +37,6 @@ _state = {
     "profiles": [],  # list of prod-shaped athlete dicts, insertion order
     "dir": None,     # on-disk payload dir (lazy, per session)
 }
-
-
-def _message(text: str) -> None:
-    print(text, file=sys.stderr)
 
 
 def _utcnow() -> str:
@@ -106,7 +103,7 @@ def clear_sandbox(source_uuid=None):
             for entry in os.listdir(d):
                 path = os.path.join(d, entry)
                 if os.path.isdir(path):
-                    _rmtree(path)
+                    shutil.rmtree(path, ignore_errors=True)
         _message("csiapps sandbox: entire sandbox cleared")
     else:
         _state["schemas"].pop(source_uuid, None)
@@ -115,15 +112,9 @@ def clear_sandbox(source_uuid=None):
         if d:
             target = os.path.join(d, source_uuid)
             if os.path.isdir(target):
-                _rmtree(target)
+                shutil.rmtree(target, ignore_errors=True)
         _message(f"csiapps sandbox: cleared source '{source_uuid}'")
     return None
-
-
-def _rmtree(path):
-    import shutil
-
-    shutil.rmtree(path, ignore_errors=True)
 
 
 def browse_sandbox(source_uuid=None):
