@@ -118,8 +118,13 @@ alongside the module it covers:
   > `_sandbox_profile(profile_id)` — the delegation targets `client.py` calls.
   > `flatten_record` (R internal, unexported, uncalled within the package) was
   > **skipped**; add it only if a consuming app actually needs it.
-- [ ] **Phase 4 — sandbox.** `sandbox.py`: router, ingest, schema validation,
-  dummy registry. Port `test-sandbox*.R` → pytest.
+- [x] **Phase 4 — sandbox.** `sandbox.py`: request router, ingest + Draft-7
+  `jsonschema` validation, dummy sport-org/athlete registry (`faker` names),
+  read-time subject resolution, and the four `_sandbox_*` delegation functions
+  `client.py` calls. Ported `test-sandbox.R`, `test-sandbox-registry.R`, the
+  `make_request` routing + `fetch_*` sandbox cases (69 passing total). Validator
+  wording adapted Ajv→jsonschema ("too short" vs "fewer than 10 characters").
+  `flatten_record` and its test remain skipped (see phase 3 note).
 - [ ] **Phase 5 — app wrapper.** `app.py` (Shiny for Python).
 - [ ] **Phase 6 — docs + publish.** mkdocs-material (≈ pkgdown), examples,
   PyPI release.

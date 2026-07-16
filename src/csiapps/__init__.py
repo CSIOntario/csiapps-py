@@ -16,17 +16,29 @@ across the porting phases (see ``PORTING_PLAN.md``):
 from .auth import check_secrets
 from .client import fetch_org_options, fetch_profile, fetch_profiles, make_request
 from .config import is_sandbox_mode, set_institute, set_sandbox_mode
+from .sandbox import (
+    browse_sandbox,
+    clear_sandbox,
+    create_profile,
+    create_sport_org,
+    register_sandbox_schema,
+)
 
 __version__ = "0.1.0"
 
 __all__ = [
     "__version__",
+    "browse_sandbox",
     "check_secrets",
+    "clear_sandbox",
+    "create_profile",
+    "create_sport_org",
     "fetch_org_options",
     "fetch_profile",
     "fetch_profiles",
     "is_sandbox_mode",
     "make_request",
+    "register_sandbox_schema",
     "set_institute",
     "set_sandbox_mode",
 ]
