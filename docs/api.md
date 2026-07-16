@@ -21,6 +21,7 @@ package, see the [R reference](https://csiontario.github.io/csiapps/reference/)
 ::: csiapps.client.fetch_org_options
 ::: csiapps.client.fetch_profiles
 ::: csiapps.client.fetch_profile
+::: csiapps.client.flatten_profile
 
 ## Sandbox
 

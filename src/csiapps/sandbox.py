@@ -66,10 +66,41 @@ def sandbox_error(status: int, msg: str):
 # ---- schema registration / clearing / browsing -------------------------
 
 
-def register_sandbox_schema(source_uuid, schema):
-    """Register a JSON schema under a data-source uuid.
+def register_sandbox_schema(source_uuid: str, schema: dict | str) -> dict:
+    """Register a JSON schema for a data source in the sandbox.
 
-    ``schema`` may be a dict, a JSON string, or a path to a JSON file.
+    The schema is what the sandbox validates ingested records against, so
+    register one before calling ingestion for that source. Registering again for
+    the same ``source_uuid`` replaces the previous schema.
+
+    Args:
+        source_uuid: The data-source identifier to register the schema under.
+            Must be a non-empty string.
+        schema: The JSON Schema (Draft 7) to validate records against. May be a
+            dict, a JSON string, or a path to a ``.json`` file.
+
+    Returns:
+        dict: The parsed schema that was stored (useful when a path or JSON
+        string was passed in).
+
+    Raises:
+        ValueError: If ``source_uuid`` is empty, or ``schema`` is not a dict,
+            JSON string, or readable JSON file.
+
+    Example:
+        >>> import csiapps
+        >>> csiapps.set_sandbox_mode(True)
+        >>> csiapps.register_sandbox_schema(
+        ...     "hr-source",
+        ...     {"type": "object", "required": ["athlete_id", "hr"]},
+        ... )   # doctest: +ELLIPSIS
+        {'type': 'object', ...}
+
+    Note:
+        Validation uses ``jsonschema`` (Draft 7) where the R package used Ajv via
+        ``jsonvalidate``; validator wording can differ on edge cases. Registered
+        schemas live for the process — see
+        [`clear_sandbox`][csiapps.sandbox.clear_sandbox] to reset.
     """
     if not (isinstance(source_uuid, str) and source_uuid):
         raise ValueError("register_sandbox_schema: `source_uuid` must be a non-empty string.")
@@ -91,8 +122,26 @@ def register_sandbox_schema(source_uuid, schema):
     return schema
 
 
-def clear_sandbox(source_uuid=None):
-    """Clear the whole sandbox, or a single source when ``source_uuid`` is given."""
+def clear_sandbox(source_uuid: str | None = None) -> None:
+    """Reset sandbox state, entirely or for a single data source.
+
+    Useful in test teardown so registered schemas, ingested records, and
+    on-disk payloads do not leak between runs.
+
+    Args:
+        source_uuid: If given, clear only that source's schema, records, and
+            payload directory. If ``None`` (the default), clear everything:
+            all schemas, records, dummy orgs, profiles, and payload
+            directories.
+
+    Returns:
+        None
+
+    Example:
+        >>> import csiapps
+        >>> csiapps.clear_sandbox("hr-source")   # one source
+        >>> csiapps.clear_sandbox()              # everything
+    """
     if source_uuid is None:
         _state["schemas"] = {}
         _state["records"] = {}
@@ -117,8 +166,28 @@ def clear_sandbox(source_uuid=None):
     return None
 
 
-def browse_sandbox(source_uuid=None):
-    """Open the sandbox payload directory in the system browser/file explorer."""
+def browse_sandbox(source_uuid: str | None = None) -> str:
+    """Open the sandbox payload directory in the system file explorer.
+
+    Each successful ingestion writes the submitted records to disk for
+    inspection; this opens that directory so you can see the raw payloads.
+
+    Args:
+        source_uuid: If given, open that source's subdirectory. If ``None`` (the
+            default), open the top-level sandbox payload directory.
+
+    Returns:
+        str: The filesystem path that was opened.
+
+    Raises:
+        RuntimeError: If the target directory does not exist yet — typically
+            because nothing has been ingested for that source.
+
+    Example:
+        >>> import csiapps
+        >>> csiapps.browse_sandbox("hr-source")   # doctest: +SKIP
+        '/tmp/csiapps_sandbox_ab12cd/hr-source'
+    """
     target = sandbox_dir()
     if source_uuid is not None:
         target = os.path.join(target, source_uuid)
@@ -224,8 +293,40 @@ def _make_profile(id, sport_org_id, first, last):
     }
 
 
-def create_sport_org(name, id=None):
-    """Create a dummy sport organization so sandbox reads behave like production."""
+def create_sport_org(name: str, id: int | None = None) -> dict:
+    """Create a dummy sport organisation in the sandbox registry.
+
+    Populates the local registry that the sandbox branches of
+    [`fetch_org_options`][csiapps.client.fetch_org_options] and
+    [`fetch_profiles`][csiapps.client.fetch_profiles] read from, so those
+    helpers behave like production without a network call. Create an org before
+    adding athletes to it with
+    [`create_profile`][csiapps.sandbox.create_profile].
+
+    Args:
+        name: Display name for the organisation. Must be a non-empty string.
+        id: Organisation id, a positive integer in ``1..999``. If ``None`` (the
+            default), an unused id in that range is chosen at random.
+
+    Returns:
+        dict: The created org with keys ``id``, ``name``, and
+        ``annual_cycle_start`` (today's date).
+
+    Raises:
+        ValueError: If ``name`` is empty, ``id`` is not a positive integer in
+            ``1..999``, or an org with that ``id`` already exists.
+        RuntimeError: If all 999 ids are already in use.
+
+    Warns:
+        UserWarning: If called while not in sandbox mode — dummy orgs are only
+            read by sandbox helpers and have no effect in production.
+
+    Example:
+        >>> import csiapps
+        >>> csiapps.set_sandbox_mode(True)
+        >>> csiapps.create_sport_org("Rowing", id=7)
+        {'id': 7, 'name': 'Rowing', 'annual_cycle_start': '...'}
+    """
     if not config.is_sandbox_mode():
         warnings.warn(
             "create_sport_org: not in sandbox mode; dummy orgs are only read by "
@@ -262,8 +363,53 @@ def create_sport_org(name, id=None):
     return org
 
 
-def create_profile(n, sport_org_id, first_names=None, last_names=None):
-    """Create ``n`` dummy athlete profiles under an existing sandbox sport org."""
+def create_profile(
+    n: int,
+    sport_org_id: int,
+    first_names: list[str] | None = None,
+    last_names: list[str] | None = None,
+) -> list:
+    """Create ``n`` dummy athlete profiles under an existing sandbox sport org.
+
+    The generated profiles are production-shaped and become readable through the
+    sandbox branches of [`fetch_profiles`][csiapps.client.fetch_profiles] and
+    [`fetch_profile`][csiapps.client.fetch_profile]. Their ids also let ingested
+    records resolve a ``subject`` when read back.
+
+    Args:
+        n: Number of profiles to create. Must be a non-negative integer.
+        sport_org_id: Id of an existing sandbox sport org (create one first with
+            [`create_sport_org`][csiapps.sandbox.create_sport_org]).
+        first_names: Optional explicit first names, length ``n``. If omitted,
+            random distinct names are generated. Must be given together with
+            ``last_names`` or not at all.
+        last_names: Optional explicit last names, length ``n``. Same rules as
+            ``first_names``.
+
+    Returns:
+        list: The newly created profile dicts (production-shaped).
+
+    Raises:
+        ValueError: If ``n`` is not a non-negative integer, the sport org does
+            not exist, only one of ``first_names``/``last_names`` is given, or
+            the provided name lists are not each of length ``n``.
+
+    Warns:
+        UserWarning: If called while not in sandbox mode — dummy profiles are
+            only read by sandbox helpers and have no effect in production.
+
+    Example:
+        >>> import csiapps
+        >>> csiapps.set_sandbox_mode(True)
+        >>> csiapps.create_sport_org("Rowing", id=7)   # doctest: +SKIP
+        >>> athletes = csiapps.create_profile(3, sport_org_id=7)
+        >>> len(athletes)
+        3
+
+    Note:
+        Random names use ``faker`` where the R package used the ``babynames``
+        dataset; generated full names are guaranteed distinct within a call.
+    """
     if not config.is_sandbox_mode():
         warnings.warn(
             "create_profile: not in sandbox mode; dummy profiles are only read by "

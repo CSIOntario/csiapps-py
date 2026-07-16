@@ -137,24 +137,75 @@ def _http_request(
 
 
 def make_request(
-    endpoint,
-    method="GET",
-    body=None,
-    query=None,
-    headers=None,
-    token=None,
-    timeout=20,
-    verbose=False,
-    paginate=False,
-    max_pages=50,
-    sandbox=None,
-):
-    """Make an authenticated API request to CSIAPPS.
+    endpoint: str,
+    method: str = "GET",
+    body: dict | None = None,
+    query: dict | None = None,
+    headers: dict | None = None,
+    token: str | None = None,
+    timeout: float = 20,
+    verbose: bool = False,
+    paginate: bool = False,
+    max_pages: int = 50,
+    sandbox: bool | None = None,
+) -> dict | list:
+    """Make an authenticated request to a CSIAPPS warehouse endpoint.
 
-    When ``sandbox`` is ``True`` (the default in development) the request is
-    routed to the local sandbox instead of the network; only warehouse endpoints
-    are emulated (see :mod:`csiapps.sandbox`). Otherwise a real HTTP request is
-    made, with the token resolved per-session then from ``CSIAPPS_ACCESS_TOKEN``.
+    This is the low-level primitive the ``fetch_*`` helpers build on; reach for
+    it directly when you need an endpoint those helpers do not cover. In sandbox
+    mode the request is served by the local emulator with no network or auth; in
+    production it is sent over HTTPS with a bearer token and a bounded retry on
+    transient failures.
+
+    Args:
+        endpoint: Warehouse endpoint path, with or without leading/trailing
+            slashes (e.g. ``"api/warehouse/data-records"``).
+        method: HTTP method, e.g. ``"GET"`` or ``"POST"``. Defaults to ``"GET"``.
+        body: JSON-serialisable request body for write methods. ``None`` sends no
+            body.
+        query: Query-string parameters as a dict. ``None`` is treated as ``{}``.
+        headers: Extra request headers merged over the ``Authorization`` header.
+            Ignored in sandbox mode.
+        token: Bearer token to authenticate with. When omitted it is resolved
+            per-session and then from the ``CSIAPPS_ACCESS_TOKEN`` environment
+            variable (see the `current_token` resolver).
+        timeout: Per-request timeout in seconds. Defaults to ``20``.
+        verbose: If ``True``, print the method, endpoint, params, and raw
+            response body for debugging. Defaults to ``False``.
+        paginate: If ``True``, follow the response's ``next`` links and return a
+            list of pages rather than a single response. Defaults to ``False``.
+        max_pages: Upper bound on pages fetched when ``paginate`` is ``True``,
+            guarding against an unbounded loop. Defaults to ``50``.
+        sandbox: Force sandbox (``True``) or production (``False``) routing.
+            ``None`` (the default) resolves via
+            [`is_sandbox_mode`][csiapps.config.is_sandbox_mode].
+
+    Returns:
+        dict | list: The parsed JSON response. A single request returns the
+        decoded body (typically a ``dict``); with ``paginate=True`` it returns a
+        ``list`` of page bodies. An empty response body yields ``[]``.
+
+    Raises:
+        RuntimeError: If no token is available in production mode, or if the API
+            responds with a status of 400 or higher.
+
+    Example:
+        Read ingested records back from the sandbox warehouse:
+
+        >>> import csiapps
+        >>> csiapps.set_sandbox_mode(True)
+        >>> csiapps.make_request(
+        ...     "api/warehouse/data-records",
+        ...     query={"source_uuid": "my-source"},
+        ... )  # doctest: +SKIP
+        {'count': 0, 'next': None, 'previous': None, 'results': []}
+
+    Note:
+        In sandbox mode only warehouse endpoints are emulated (see the
+        `csiapps.sandbox` module); an unrecognised endpoint raises a
+        ``RuntimeError`` with a 501-style message. Transient production failures
+        (429/500/502/503/504) are retried up to three times with exponential
+        backoff.
     """
     if query is None:
         query = {}
@@ -183,13 +234,41 @@ def make_request(
     )
 
 
-def fetch_org_options(token=None, sandbox=None):
-    """Fetch organisation options as a ``{value: label}`` dict.
+def fetch_org_options(token: str | None = None, sandbox: bool | None = None) -> dict:
+    """Fetch sport-organisation options as a ``{value: label}`` dict.
 
-    The shape plugs directly into ``ui.input_select(choices=...)`` (Shiny for
-    Python maps value -> displayed label). This differs from the R package, which
-    returned ``label``/``value`` pairs for R's ``selectInput`` -- that shape
-    raises ``TypeError: unhashable type: 'dict'`` in Shiny for Python.
+    The returned mapping plugs directly into a Shiny select input's ``choices=``
+    argument, which maps each value to its displayed label.
+
+    Args:
+        token: Bearer token to authenticate with. When omitted it is resolved
+            per-session and then from ``CSIAPPS_ACCESS_TOKEN``.
+        sandbox: Force sandbox (``True``) or production (``False``) routing.
+            ``None`` (the default) resolves via
+            [`is_sandbox_mode`][csiapps.config.is_sandbox_mode].
+
+    Returns:
+        dict: A mapping of organisation id to organisation name, ready to pass as
+        ``ui.input_select(..., choices=...)``. Empty if no organisations are
+        available.
+
+    Raises:
+        RuntimeError: If no token is available in production mode, or the API
+            responds with a status of 400 or higher.
+
+    Example:
+        >>> import csiapps
+        >>> csiapps.set_sandbox_mode(True)
+        >>> csiapps.create_sport_org("Rowing", id=7)  # doctest: +SKIP
+        >>> csiapps.fetch_org_options()               # doctest: +SKIP
+        {7: 'Rowing'}
+
+    Note:
+        The ``{value: label}`` shape differs from the R package, which returned
+        ``label``/``value`` pairs for R's ``selectInput`` — that shape raises
+        ``TypeError: unhashable type: 'dict'`` in Shiny for Python. In sandbox
+        mode the options come from the local registry populated by
+        [`create_sport_org`][csiapps.sandbox.create_sport_org].
     """
     if sandbox is None:
         sandbox = config.is_sandbox_mode()
@@ -223,16 +302,54 @@ def fetch_org_options(token=None, sandbox=None):
     return {}
 
 
-def fetch_profiles(token=None, filters=None, sandbox=None, max_pages=50):
-    """Fetch all profiles accessible to the token, auto-paginating.
+def fetch_profiles(
+    token: str | None = None,
+    filters: dict | None = None,
+    sandbox: bool | None = None,
+    max_pages: int = 50,
+) -> list:
+    """Fetch all registration profiles accessible to the token, auto-paginating.
 
-    ``filters`` is a dict of query parameters (e.g. ``{"sport_org_id": 42}``).
-    In sandbox mode only ``sport_org_id`` is honoured.
+    Follows the API's pagination automatically and returns every profile as a
+    flat list. Pass the result through
+    [`flatten_profile`][csiapps.client.flatten_profile] before rendering it in a
+    table.
 
-    Pagination is bounded by ``max_pages`` (default 50, matching
-    :func:`make_request`) and terminates if the server ever repeats a ``next``
-    URL, so a misbehaving or hostile server can't hang the app in an unbounded
-    loop with unbounded memory growth.
+    Args:
+        token: Bearer token to authenticate with. When omitted it is resolved
+            per-session and then from ``CSIAPPS_ACCESS_TOKEN``.
+        filters: Query parameters narrowing the result, e.g.
+            ``{"sport_org_id": 42}``. In sandbox mode only ``sport_org_id`` is
+            honoured. ``None`` fetches all accessible profiles.
+        sandbox: Force sandbox (``True``) or production (``False``) routing.
+            ``None`` (the default) resolves via
+            [`is_sandbox_mode`][csiapps.config.is_sandbox_mode].
+        max_pages: Upper bound on pages fetched, matching
+            [`make_request`][csiapps.client.make_request]. Defaults to ``50``.
+
+    Returns:
+        list: A list of profile dicts (nested, production-shaped). Empty if no
+        profiles match.
+
+    Raises:
+        RuntimeError: If no token is available in production mode, or the API
+            responds with a status of 400 or higher.
+
+    Warns:
+        UserWarning: If ``max_pages`` is reached while the server still
+            advertises more pages; the result may be truncated. Pass a larger
+            ``max_pages`` to fetch the rest.
+
+    Example:
+        >>> import csiapps
+        >>> csiapps.set_sandbox_mode(True)
+        >>> profiles = csiapps.fetch_profiles(filters={"sport_org_id": 7})
+        >>> rows = [csiapps.flatten_profile(p) for p in profiles]
+
+    Note:
+        Pagination terminates if the server ever repeats a ``next`` URL, so a
+        misbehaving or hostile server cannot hang the app in an unbounded loop
+        with unbounded memory growth.
     """
     if filters is None:
         filters = {}
@@ -285,9 +402,42 @@ def fetch_profiles(token=None, filters=None, sandbox=None, max_pages=50):
     return out
 
 
-def fetch_profile(profile_id, token=None, sandbox=None):
-    """Fetch a single profile by id. Returns the profile dict, or ``None`` in
-    sandbox mode when no such id exists."""
+def fetch_profile(
+    profile_id: int | str,
+    token: str | None = None,
+    sandbox: bool | None = None,
+) -> dict | None:
+    """Fetch a single registration profile by id.
+
+    Args:
+        profile_id: The profile's id. Coerced to a string and URL-encoded before
+            being placed in the request path, so an unusual value cannot alter
+            the URL.
+        token: Bearer token to authenticate with. When omitted it is resolved
+            per-session and then from ``CSIAPPS_ACCESS_TOKEN``.
+        sandbox: Force sandbox (``True``) or production (``False``) routing.
+            ``None`` (the default) resolves via
+            [`is_sandbox_mode`][csiapps.config.is_sandbox_mode].
+
+    Returns:
+        dict | None: The profile dict. In sandbox mode returns ``None`` when no
+        profile with that id exists.
+
+    Raises:
+        RuntimeError: If no token is available in production mode, or the API
+            responds with a status of 400 or higher.
+
+    Example:
+        >>> import csiapps
+        >>> csiapps.set_sandbox_mode(True)
+        >>> csiapps.fetch_profile(1)   # doctest: +SKIP
+        {'id': 1, 'person': {...}, 'sport': {...}, 'status': 'ACTIVE', ...}
+
+    Note:
+        A production ``GET`` for a missing id raises ``RuntimeError`` (from the
+        4xx status) rather than returning ``None``; only the sandbox reader
+        distinguishes "not found" as ``None``.
+    """
     if sandbox is None:
         sandbox = config.is_sandbox_mode()
     if sandbox:
@@ -317,8 +467,31 @@ def fetch_profile(profile_id, token=None, sandbox=None):
 # data frame fails ("Unsupported dataframe type"). flatten_profile turns one
 # profile into scalar fields so a list of them builds a table (wrap in
 # pandas/polars for render.data_frame).
-def flatten_profile(p):
-    """Flatten a registration profile into a scalar row for tables/selection."""
+def flatten_profile(p: dict) -> dict:
+    """Flatten a nested registration profile into a scalar row.
+
+    [`fetch_profiles`][csiapps.client.fetch_profiles] returns deeply nested
+    dicts; passing them straight to a Shiny data frame fails with "Unsupported
+    dataframe type". This picks out the commonly displayed fields into a flat,
+    one-level dict so a list of them builds a table (wrap in pandas/polars for
+    ``render.data_frame``).
+
+    Args:
+        p: A single profile dict as returned by
+            [`fetch_profiles`][csiapps.client.fetch_profiles] or
+            [`fetch_profile`][csiapps.client.fetch_profile]. Missing nested
+            sections are tolerated (treated as empty).
+
+    Returns:
+        dict: A flat row with keys ``id``, ``first_name``, ``last_name``,
+        ``email``, ``dob``, ``sport_id``, ``sport``, and ``status``. Any absent
+        source field is ``None``.
+
+    Example:
+        >>> import csiapps, pandas as pd
+        >>> profiles = csiapps.fetch_profiles()          # doctest: +SKIP
+        >>> df = pd.DataFrame(csiapps.flatten_profile(p) for p in profiles)
+    """
     person = p.get("person") or {}
     sport = p.get("sport") or {}
     return {

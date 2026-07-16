@@ -20,10 +20,13 @@ Framework mapping notes (R Shiny -> Shiny for Python):
 
 import asyncio
 import os
+from collections.abc import Callable
 from urllib.parse import parse_qs, urlencode
 
 import httpx
 from shiny import reactive, render, ui
+from shiny.types import TagChild
+from shiny.ui import Tag
 
 from . import auth, client, config
 
@@ -120,9 +123,39 @@ def _sandbox_banner():
     )
 
 
-def ui_wrapper(*args, sandbox=None):
-    """Wrap app UI with the CSI navbar, footer, auth-status line, and (in sandbox
-    mode) a banner making it obvious the app is not connected to the warehouse."""
+def ui_wrapper(*args: TagChild, sandbox: bool | None = None) -> Tag:
+    """Wrap an app's UI in the standard CSI chrome.
+
+    Adds the CSI navbar, footer, an auth-status line, the favicon and
+    redirect/reset message handlers, and — in sandbox mode — a banner making it
+    obvious the app is not connected to the live warehouse. Use it in place of
+    ``ui.page_fluid`` at the top of an app's UI definition; pair it with
+    [`server_wrapper`][csiapps.app.server_wrapper] on the server side.
+
+    Args:
+        *args: The app's own UI elements (Shiny tags / components), rendered
+            below the auth-status line inside the chrome.
+        sandbox: Force the sandbox banner on (``True``) or off (``False``).
+            ``None`` (the default) resolves via
+            [`is_sandbox_mode`][csiapps.config.is_sandbox_mode].
+
+    Returns:
+        A ``ui.page_fluid`` page containing the chrome and the supplied UI.
+
+    Example:
+        >>> from shiny import ui
+        >>> import csiapps
+        >>> app_ui = csiapps.ui_wrapper(
+        ...     ui.h2("My app"),
+        ...     ui.input_action_button("logout", "Log out"),
+        ... )   # doctest: +SKIP
+
+    Note:
+        The chrome styles are scoped by id and marked ``!important`` so a wrapped
+        app's own theme cannot override the navbar and footer. Include an
+        ``input_action_button("logout", ...)`` for the logout effect wired up by
+        [`server_wrapper`][csiapps.app.server_wrapper].
+    """
     if sandbox is None:
         sandbox = config.is_sandbox_mode()
 
@@ -176,8 +209,43 @@ def _signed_in_text(userinfo, sandbox):
     return text
 
 
-def server_wrapper(app_specific_logic, sandbox=None):
-    """Wrap an app server function with CSIAPPS authentication handling."""
+def server_wrapper(
+    app_specific_logic: Callable, sandbox: bool | None = None
+) -> Callable:
+    """Wrap an app's server function with CSIAPPS authentication.
+
+    Returns a Shiny server function that handles login before delegating to your
+    own server logic. In production it runs the OAuth2 PKCE flow (redirect to
+    CSIAPPS, exchange the returned code for a token, load ``/me`` for the header).
+    In sandbox mode it simulates that login using ``CSIAPPS_ACCESS_TOKEN`` if
+    set, or marks the session unauthenticated otherwise. Either way the
+    per-session token is stored so [`make_request`][csiapps.client.make_request]
+    and the ``fetch_*`` helpers pick it up automatically.
+
+    Args:
+        app_specific_logic: Your app's server function with the usual Shiny
+            ``(input, output, session)`` signature. It is called after auth is
+            wired up, keeping its own lexical scope.
+        sandbox: Force sandbox (``True``) or production (``False``) auth
+            behaviour. ``None`` (the default) resolves via
+            [`is_sandbox_mode`][csiapps.config.is_sandbox_mode].
+
+    Returns:
+        Callable: A server function to hand to Shiny's ``App(app_ui, server)``.
+
+    Example:
+        >>> from shiny import App
+        >>> import csiapps
+        >>> def my_server(input, output, session):
+        ...     ...
+        >>> app = App(app_ui, csiapps.server_wrapper(my_server))   # doctest: +SKIP
+
+    Note:
+        The wrapper registers a logout effect bound to an ``input.logout``
+        action button — include one in the UI (see
+        [`ui_wrapper`][csiapps.app.ui_wrapper]). Blocking token and ``/me`` calls
+        run off the event loop so a slow endpoint cannot stall other sessions.
+    """
     if sandbox is None:
         sandbox = config.is_sandbox_mode()
 

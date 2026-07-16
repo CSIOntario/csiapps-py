@@ -33,10 +33,29 @@ _state = {
 
 
 def set_institute(institute: str = "csipacific") -> None:
-    """Set the target institute for API calls.
+    """Set the target institute for all subsequent API calls.
+
+    The institute determines the base host every request is sent to and which
+    logo the Shiny chrome renders. It is process-wide global state (a direct
+    mirror of the R package's ``package_state`` environment): there is only ever
+    one configured institute per process, so set it once at startup.
 
     Args:
-        institute: One of ``"csipacific"`` or ``"csiontario"``.
+        institute: Which CSI institute to target. Must be one of
+            ``"csipacific"`` or ``"csiontario"``. Defaults to ``"csipacific"``.
+
+    Raises:
+        ValueError: If ``institute`` is not one of the two supported values.
+
+    Example:
+        >>> import csiapps
+        >>> csiapps.set_institute("csiontario")
+
+    Note:
+        This only selects the target host; it does not authenticate. See
+        [`check_secrets`][csiapps.auth.check_secrets] for credential setup and
+        [`is_sandbox_mode`][csiapps.config.is_sandbox_mode] for whether requests
+        actually reach the network.
     """
     if not (isinstance(institute, str) and institute in _VALID_INSTITUTES):
         raise ValueError(
@@ -66,26 +85,66 @@ def userinfo_url() -> str:
 
 
 def set_sandbox_mode(enabled: bool | None) -> None:
-    """Force sandbox mode on or off (Python analog of R's ``options(csiapps.sandbox=)``).
+    """Force sandbox mode on or off, or clear the override.
 
-    Pass ``True``/``False`` to override, or ``None`` to clear the override and
-    fall back to the ``CSIAPPS_ENV`` environment variable.
+    The Python analog of R's ``options(csiapps.sandbox = ...)``. An override set
+    here takes precedence over the ``CSIAPPS_ENV`` environment variable when
+    [`is_sandbox_mode`][csiapps.config.is_sandbox_mode] resolves the effective
+    mode.
+
+    Args:
+        enabled: ``True`` to force sandbox mode on, ``False`` to force it off, or
+            ``None`` to clear the override and fall back to ``CSIAPPS_ENV``.
+
+    Example:
+        Pin sandbox mode on for a test, then restore environment-based
+        resolution afterwards:
+
+        >>> import csiapps
+        >>> csiapps.set_sandbox_mode(True)
+        >>> csiapps.is_sandbox_mode()
+        True
+        >>> csiapps.set_sandbox_mode(None)  # back to CSIAPPS_ENV
+
+    Note:
+        Only the literal ``True`` enables sandbox mode; any other truthy value is
+        treated as ``False`` (mirrors R's ``isTRUE()``). See
+        [`is_sandbox_mode`][csiapps.config.is_sandbox_mode] for the full
+        resolution order.
     """
     _state["sandbox_override"] = enabled
 
 
 def is_sandbox_mode() -> bool:
-    """Whether sandbox mode is enabled globally.
+    """Report whether sandbox mode is currently enabled.
 
-    Sandbox mode is **on by default** so requests never reach production by
-    accident. Resolution order (matching the R package):
+    Sandbox mode is the fail-safe default: when it is on, the ``fetch_*`` and
+    [`make_request`][csiapps.client.make_request] helpers route to the local
+    in-memory emulator in the `csiapps.sandbox` module instead of the network, so no
+    request can reach production by accident. Every helper that hits the API
+    consults this function when its own ``sandbox`` argument is left as ``None``.
 
-    1. An explicit override set via :func:`set_sandbox_mode` always wins. Only
+    Resolution order (matching the R package):
+
+    1. An explicit override set via
+       [`set_sandbox_mode`][csiapps.config.set_sandbox_mode] always wins. Only
        the literal ``True`` enables it; any other set value is treated as
        ``False`` (mirrors R's ``isTRUE()``).
-    2. Otherwise ``CSIAPPS_ENV``: only the literal ``"production"`` disables
-       sandbox; any other non-empty value keeps it on (fail-safe against typos).
+    2. Otherwise the ``CSIAPPS_ENV`` environment variable: only the literal
+       ``"production"`` disables sandbox; any other non-empty value keeps it on
+       (fail-safe against typos such as ``"prod"``).
     3. Otherwise ``True``.
+
+    Returns:
+        bool: ``True`` if sandbox mode is active (requests are emulated
+        locally), ``False`` if requests go to the live warehouse.
+
+    Example:
+        >>> import os, csiapps
+        >>> csiapps.set_sandbox_mode(None)          # use the environment
+        >>> os.environ["CSIAPPS_ENV"] = "production"
+        >>> csiapps.is_sandbox_mode()
+        False
     """
     override = _state["sandbox_override"]
     if override is not None:

@@ -102,12 +102,48 @@ def exchange_code_for_token(code: str, code_verifier: str | None = None) -> dict
 
 
 def check_secrets(verbose: bool = False, sandbox: bool | None = None) -> bool:
-    """Check that the environment is configured for authentication.
+    """Validate that the environment is configured for authentication.
 
-    In sandbox mode the OAuth secret checks are skipped (sandbox simulates the
-    login and needs no client credentials); instead the presence of
-    ``CSIAPPS_ACCESS_TOKEN`` is reported. Never raises in sandbox mode. Outside
-    sandbox, raises :class:`ValueError` if any required URL is missing/malformed.
+    Call this once at app startup to fail fast on a misconfigured deployment.
+    Behaviour depends on the mode:
+
+    - **Sandbox mode:** OAuth secret checks are skipped entirely (the sandbox
+      simulates login and needs no client credentials). Instead the presence or
+      absence of ``CSIAPPS_ACCESS_TOKEN`` is reported to stderr, and the function
+      never raises.
+    - **Production mode:** the OAuth URLs derived from the configured institute
+      plus ``CSIAPPS_REDIRECT_URI`` are checked for a well-formed ``http(s)``
+      scheme, and a :class:`ValueError` is raised listing any that are missing or
+      malformed.
+
+    Args:
+        verbose: If ``True``, dump the resolved CSIAPPS environment (client id,
+            auth/token/userinfo URLs, redirect URI, scope, and whether a client
+            secret is set) to stderr. The client secret value itself is never
+            printed — only whether one is present. Defaults to ``False``.
+        sandbox: Force the mode for this check. ``True`` or ``False`` overrides
+            detection; ``None`` (the default) resolves via
+            [`is_sandbox_mode`][csiapps.config.is_sandbox_mode].
+
+    Returns:
+        bool: Always ``True`` when the environment is usable. In production the
+        function raises rather than returning ``False``, so a ``True`` return is
+        a positive assurance the required URLs are present.
+
+    Raises:
+        ValueError: In production mode only, if any of ``CSIAPPS_AUTH_URL``,
+            ``CSIAPPS_TOKEN_URL``, or ``CSIAPPS_REDIRECT_URI`` is missing or does
+            not start with ``http://`` or ``https://``.
+
+    Example:
+        >>> import csiapps
+        >>> csiapps.check_secrets(verbose=True)   # sandbox: prints token status
+        True
+
+    Note:
+        The auth and token URLs are derived from the institute set via
+        [`set_institute`][csiapps.config.set_institute], not read directly from
+        the environment, so set the institute before calling this.
     """
     if sandbox is None:
         sandbox = config.is_sandbox_mode()
