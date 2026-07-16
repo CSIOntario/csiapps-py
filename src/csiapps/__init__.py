@@ -15,7 +15,14 @@ across the porting phases (see ``PORTING_PLAN.md``):
 
 from .app import global_wrapper, server_wrapper, ui_wrapper
 from .auth import check_secrets
-from .client import fetch_org_options, fetch_profile, fetch_profiles, make_request
+from .client import (
+    fetch_org_options,
+    fetch_profile,
+    fetch_profiles,
+    flatten_profile,
+    flatten_record,
+    make_request,
+)
 from .config import is_sandbox_mode, set_institute, set_sandbox_mode
 from .sandbox import (
     browse_sandbox,
@@ -37,6 +44,8 @@ __all__ = [
     "fetch_org_options",
     "fetch_profile",
     "fetch_profiles",
+    "flatten_profile",
+    "flatten_record",
     "global_wrapper",
     "is_sandbox_mode",
     "make_request",

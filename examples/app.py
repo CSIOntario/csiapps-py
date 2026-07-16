@@ -14,9 +14,13 @@ import csiapps
 # Seed dummy registration data (sandbox is the default mode).
 csiapps.set_institute("csiontario")
 csiapps.create_sport_org("Rowing Canada", id=100)
+csiapps.create_sport_org("Swim BC", id=200)
 csiapps.create_profile(5, 100)
+csiapps.create_profile(3, 200)
 
 app_ui = csiapps.ui_wrapper(
+    # fetch_org_options() is a {value: label} dict -> feeds input_select directly.
+    ui.input_select("org", "Organisation", choices=csiapps.fetch_org_options()),
     ui.h3("Athletes"),
     ui.output_ui("athletes"),
 )
@@ -25,11 +29,10 @@ app_ui = csiapps.ui_wrapper(
 def app_server(input, output, session):
     @render.ui
     def athletes():
+        profiles = csiapps.fetch_profiles(filters={"sport_org_id": int(input.org())})
         rows = []
-        for p in csiapps.fetch_profiles():
-            person, sport = p["person"], p["sport"]
-            label = f"{person['first_name']} {person['last_name']} — {sport['name']}"
-            rows.append(ui.tags.li(label))
+        for p in (csiapps.flatten_profile(x) for x in profiles):
+            rows.append(ui.tags.li(f"{p['first_name']} {p['last_name']} — {p['sport']}"))
         return ui.tags.ul(*rows)
 
 

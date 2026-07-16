@@ -106,11 +106,9 @@ def test_athlete_sport_name_is_org_name():
 # ---- fetch_* in sandbox mode -------------------------------------------
 
 
-def test_fetch_org_options_returns_label_value_pairs():
+def test_fetch_org_options_returns_value_label_dict():
     create_sport_org("Cycling Canada", id=100)
-    opts = fetch_org_options(sandbox=True)
-    assert len(opts) == 1
-    assert opts[0] == {"label": "Cycling Canada", "value": 100}
+    assert fetch_org_options(sandbox=True) == {100: "Cycling Canada"}
 
 
 def test_fetch_profiles_filtered_by_sport_org_id():
@@ -136,7 +134,7 @@ def test_fetch_profile_by_id_or_none():
 
 
 def test_empty_registry_yields_empty_reads():
-    assert fetch_org_options(sandbox=True) == []
+    assert fetch_org_options(sandbox=True) == {}
     assert fetch_profiles(sandbox=True) == []
     assert fetch_profile(profile_id=1, sandbox=True) is None
 

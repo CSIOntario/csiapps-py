@@ -15,6 +15,8 @@ from csiapps.client import (
     fetch_org_options,
     fetch_profile,
     fetch_profiles,
+    flatten_profile,
+    flatten_record,
     make_request,
 )
 
@@ -97,9 +99,8 @@ def test_fetch_org_options_maps_results():
             200, json={"results": [{"name": "Rowing Canada", "id": 42}]}
         )
     )
-    assert fetch_org_options(token="tok", sandbox=False) == [
-        {"label": "Rowing Canada", "value": 42}
-    ]
+    # {value: label} -- plugs straight into ui.input_select(choices=...)
+    assert fetch_org_options(token="tok", sandbox=False) == {42: "Rowing Canada"}
 
 
 def test_fetch_org_options_requires_token():
@@ -132,3 +133,45 @@ def test_fetch_profile_returns_json_and_encodes_id():
     )
     out = fetch_profile("12/3", token="tok", sandbox=False)
     assert out == {"id": "12/3"}
+
+
+# ---- flatten helpers ----
+
+
+def test_flatten_profile_is_scalar_row():
+    p = {
+        "id": 1,
+        "person": {"first_name": "Ada", "last_name": "L", "email": "a@x.com", "dob": "2000-01-01"},
+        "sport": {"id": 100, "name": "Rowing"},
+        "status": "ACTIVE",
+    }
+    row = flatten_profile(p)
+    assert row == {
+        "id": 1,
+        "first_name": "Ada",
+        "last_name": "L",
+        "email": "a@x.com",
+        "dob": "2000-01-01",
+        "sport_id": 100,
+        "sport": "Rowing",
+        "status": "ACTIVE",
+    }
+    assert all(not isinstance(v, (dict, list)) for v in row.values())
+
+
+def test_flatten_record_resolved_and_unresolved_subject():
+    resolved = flatten_record(
+        {
+            "id": 1,
+            "dataset_uuid": "d1",
+            "data": {"k": "v"},
+            "subject": {"first_name": "Ada", "last_name": "L", "sport": {"name": "Rowing"}},
+            "created_at": "t",
+        }
+    )
+    assert resolved["profile"] == "Ada L"
+    assert resolved["sport"] == "Rowing"
+
+    unresolved = flatten_record({"id": 2, "data": {"k": "v"}, "subject": None})
+    assert unresolved["profile"] == "-"
+    assert unresolved["sport"] is None

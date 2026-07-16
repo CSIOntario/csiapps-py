@@ -146,6 +146,23 @@ alongside the module it covers:
 
 Phases 1–4 are framework-independent and safe to build in any order after 1.
 
+## Dashboard dogfooding findings (fixed)
+
+Building a real Shiny for Python dashboard against the package surfaced three
+issues from common workflows, all fixed:
+
+1. **`fetch_org_options` shape** — returned R's `[{"label","value"}]`, which
+   crashed `ui.input_select` (`TypeError: unhashable type: 'dict'`). Now returns
+   a `{value: label}` dict that feeds `input_select(choices=...)` directly.
+   Deliberate divergence from R (whose shape suited `selectInput`).
+2. **No path from nested results to a table** — `fetch_profiles`/data-records
+   return deeply nested dicts; `render.DataGrid` rejected them
+   ("Unsupported dataframe type"). Added `flatten_profile` / `flatten_record`
+   (the latter un-skips the R internal) producing scalar rows; docs show wrapping
+   in a pandas/polars frame (kept out of package deps).
+3. **Fixed-bottom footer overlapped content** — the R wrapper's
+   `padding-bottom: 80px` was dropped in the port; restored in `ui_wrapper`.
+
 ## Parity caveats carried over from R
 
 * **Validation parity is approximate.** Sandbox ingestion validates against the

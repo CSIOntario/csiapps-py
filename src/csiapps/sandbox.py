@@ -316,7 +316,7 @@ def create_profile(n, sport_org_id, first_names=None, last_names=None):
 
 def _sandbox_org_options():
     _message("csiapps sandbox: fetch_org_options() reading local registry (see create_sport_org())")
-    return [{"label": o["name"], "value": o["id"]} for o in _state["orgs"].values()]
+    return {o["id"]: o["name"] for o in _state["orgs"].values()}
 
 
 def _sandbox_profiles(sport_org_id=None):

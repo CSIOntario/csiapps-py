@@ -148,8 +148,15 @@ def ui_wrapper(*args, sandbox=None):
     ]
     if sandbox:
         children.append(_sandbox_banner())
-    children.append(ui.output_ui("auth_status"))
-    children.extend(args)
+    # padding-bottom leaves room for the fixed-bottom footer so it never overlaps
+    # app content on short pages (mirrors the R wrapper's fluidPage style).
+    children.append(
+        ui.div(
+            ui.output_ui("auth_status"),
+            *args,
+            style="padding-bottom: 80px;",
+        )
+    )
     children.append(_footer_ui())
     return ui.page_fluid(*children)
 

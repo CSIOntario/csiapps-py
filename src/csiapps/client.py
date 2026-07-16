@@ -184,9 +184,12 @@ def make_request(
 
 
 def fetch_org_options(token=None, sandbox=None):
-    """Fetch organisation options as a list of ``{"label", "value"}`` dicts.
+    """Fetch organisation options as a ``{value: label}`` dict.
 
-    Suitable for Shiny ``ui.input_select`` choices.
+    The shape plugs directly into ``ui.input_select(choices=...)`` (Shiny for
+    Python maps value -> displayed label). This differs from the R package, which
+    returned ``label``/``value`` pairs for R's ``selectInput`` -- that shape
+    raises ``TypeError: unhashable type: 'dict'`` in Shiny for Python.
     """
     if sandbox is None:
         sandbox = config.is_sandbox_mode()
@@ -214,10 +217,10 @@ def fetch_org_options(token=None, sandbox=None):
 
     items = resp.json()
     if isinstance(items, dict) and items.get("results") is not None:
-        return [{"label": it.get("name"), "value": it.get("id")} for it in items["results"]]
+        return {it.get("id"): it.get("name") for it in items["results"]}
     if isinstance(items, list):
-        return [{"label": v, "value": v} for v in items]
-    return []
+        return {v: v for v in items}
+    return {}
 
 
 def fetch_profiles(token=None, filters=None, sandbox=None):
@@ -285,3 +288,51 @@ def fetch_profile(profile_id, token=None, sandbox=None):
     if resp.status_code >= 400:
         raise RuntimeError(f"fetch_profile failed ({resp.status_code}): {resp.text}")
     return resp.json()
+
+
+# ---- flattening helpers (nested API objects -> flat, tabular rows) ------
+# fetch_profiles()/data-records return deeply nested dicts; passing them
+# straight to a Shiny data frame fails ("Unsupported dataframe type"). These
+# flatten one object to scalar fields so a list of them builds a table (wrap in
+# pandas/polars for render.data_frame).
+
+
+def flatten_record(rec):
+    """Flatten a warehouse data record into scalar fields plus its ``data`` payload.
+
+    Port of the R ``flatten_record``. ``profile`` is the resolved subject's
+    display name (``"-"`` when unresolved); ``data`` stays nested.
+    """
+    subject = rec.get("subject")
+    subject_label = "-"
+    sport = None
+    if subject:
+        first = subject.get("first_name") or ""
+        last = subject.get("last_name") or ""
+        subject_label = f"{first} {last}".strip() or "-"
+        sport = (subject.get("sport") or {}).get("name")
+    return {
+        "id": rec.get("uuid") or rec.get("id"),
+        "dataset_uuid": rec.get("dataset_uuid"),
+        "profile": subject_label,
+        "created_at": rec.get("created_at"),
+        "updated_at": rec.get("updated_at"),
+        "sport": sport,
+        "data": rec.get("data") or {},
+    }
+
+
+def flatten_profile(p):
+    """Flatten a registration profile into a scalar row for tables/selection."""
+    person = p.get("person") or {}
+    sport = p.get("sport") or {}
+    return {
+        "id": p.get("id"),
+        "first_name": person.get("first_name"),
+        "last_name": person.get("last_name"),
+        "email": person.get("email"),
+        "dob": person.get("dob"),
+        "sport_id": sport.get("id"),
+        "sport": sport.get("name"),
+        "status": p.get("status"),
+    }

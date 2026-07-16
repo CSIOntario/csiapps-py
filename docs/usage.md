@@ -34,8 +34,31 @@ like production:
 org = csiapps.create_sport_org("Rowing Canada", id=100)
 csiapps.create_profile(5, org["id"])          # 5 athletes with random names
 
-csiapps.fetch_org_options()                    # [{"label": "Rowing Canada", "value": 100}]
-csiapps.fetch_profiles(filters={"sport_org_id": 100})   # 5 profiles
+csiapps.fetch_org_options()                    # {100: "Rowing Canada"}
+csiapps.fetch_profiles(filters={"sport_org_id": 100})   # 5 profiles (nested dicts)
+```
+
+`fetch_org_options()` returns a `{value: label}` dict, so it plugs straight into
+a select input:
+
+```python
+ui.input_select("org", "Organisation", choices=csiapps.fetch_org_options())
+```
+
+## Showing results in a table
+
+`fetch_profiles()` / data-records return deeply nested dicts. Flatten them to
+scalar rows with `flatten_profile` / `flatten_record`, then wrap in a DataFrame
+(pandas or polars — your dashboard's choice, not a `csiapps` dependency):
+
+```python
+import pandas as pd
+from shiny import render
+
+@render.data_frame
+def athletes():
+    rows = [csiapps.flatten_profile(p) for p in csiapps.fetch_profiles()]
+    return render.DataGrid(pd.DataFrame(rows))
 ```
 
 ## Talking to the real API
