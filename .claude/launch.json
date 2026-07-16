@@ -6,6 +6,12 @@
       "runtimeExecutable": "uv",
       "runtimeArgs": ["run", "shiny", "run", "--port", "8123", "examples/app.py"],
       "port": 8123
+    },
+    {
+      "name": "docs",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "--group", "docs", "mkdocs", "serve", "-a", "localhost:8000"],
+      "port": 8000
     }
   ]
 }

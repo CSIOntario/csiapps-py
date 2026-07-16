@@ -1,6 +1,9 @@
-# API reference
+# Python API reference
 
-Everything exported from the top-level `csiapps` package.
+Everything exported from the top-level `csiapps` Python package. For the R
+package, see the [R reference](https://csiontario.github.io/csiapps/reference/)
+(pkgdown); for how the two map onto each other, see the
+[parity checklist](parity.md).
 
 ## Configuration
 

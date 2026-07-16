@@ -1,5 +1,5 @@
-site_name: csiapps (Python)
-site_description: Helper functions for CSI data warehouse ingestion and Shiny apps
+site_name: csiapps
+site_description: Helper functions for CSI data warehouse ingestion and Shiny apps — R and Python
 repo_url: https://github.com/CSIOntario/csiapps-py
 theme:
   name: material
@@ -14,6 +14,19 @@ theme:
       toggle:
         icon: material/weather-sunny
         name: Light mode
+  features:
+    - content.tabs.link
+    - content.code.copy
+    - navigation.sections
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
 plugins:
   - search
   - mkdocstrings:
@@ -26,5 +39,10 @@ plugins:
             heading_level: 3
 nav:
   - Home: index.md
-  - Usage: usage.md
-  - API reference: api.md
+  - Tutorials:
+      - Shiny apps: shiny-apps.md
+      - REST API: rest-api.md
+      - Sandbox mode: sandbox.md
+  - Parity checklist: parity.md
+  - Python reference: api.md
+  - R reference ↗: https://csiontario.github.io/csiapps/reference/

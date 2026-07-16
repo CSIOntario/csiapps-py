@@ -31,8 +31,9 @@ page = csiapps.make_request("api/warehouse/data-records", query={"source_uuid": 
 print(page["count"])   # 1
 ```
 
-See [`docs/usage.md`](docs/usage.md) and runnable [`examples/`](examples/)
-(`warehouse_ingest.py`, `app.py`).
+See the [cross-language documentation](https://csiontario.github.io/csiapps-py/)
+(R and Python side by side, plus a [parity checklist](https://csiontario.github.io/csiapps-py/parity/))
+and the runnable [`examples/`](examples/) (`warehouse_ingest.py`, `app.py`).
 
 ## Development
 
