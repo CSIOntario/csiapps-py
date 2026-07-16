@@ -136,9 +136,12 @@ def check_secrets(verbose: bool = False, sandbox: bool | None = None) -> bool:
             not start with ``http://`` or ``https://``.
 
     Example:
-        >>> import csiapps
-        >>> csiapps.check_secrets(verbose=True)   # sandbox: prints token status
-        True
+        ```python
+        import csiapps
+
+        # In sandbox mode: prints token status and returns True.
+        csiapps.check_secrets(verbose=True)
+        ```
 
     Note:
         The auth and token URLs are derived from the institute set via

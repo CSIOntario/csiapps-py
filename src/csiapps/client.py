@@ -192,13 +192,16 @@ def make_request(
     Example:
         Read ingested records back from the sandbox warehouse:
 
-        >>> import csiapps
-        >>> csiapps.set_sandbox_mode(True)
-        >>> csiapps.make_request(
-        ...     "api/warehouse/data-records",
-        ...     query={"source_uuid": "my-source"},
-        ... )  # doctest: +SKIP
-        {'count': 0, 'next': None, 'previous': None, 'results': []}
+        ```python
+        import csiapps
+
+        csiapps.set_sandbox_mode(True)
+        csiapps.make_request(
+            "api/warehouse/data-records",
+            query={"source_uuid": "my-source"},
+        )
+        # -> {'count': 0, 'next': None, 'previous': None, 'results': []}
+        ```
 
     Note:
         In sandbox mode only warehouse endpoints are emulated (see the
@@ -257,11 +260,13 @@ def fetch_org_options(token: str | None = None, sandbox: bool | None = None) -> 
             responds with a status of 400 or higher.
 
     Example:
-        >>> import csiapps
-        >>> csiapps.set_sandbox_mode(True)
-        >>> csiapps.create_sport_org("Rowing", id=7)  # doctest: +SKIP
-        >>> csiapps.fetch_org_options()               # doctest: +SKIP
-        {7: 'Rowing'}
+        ```python
+        import csiapps
+
+        csiapps.set_sandbox_mode(True)
+        csiapps.create_sport_org("Rowing", id=7)
+        csiapps.fetch_org_options()   # -> {7: 'Rowing'}
+        ```
 
     Note:
         The ``{value: label}`` shape differs from the R package, which returned
@@ -341,10 +346,13 @@ def fetch_profiles(
             ``max_pages`` to fetch the rest.
 
     Example:
-        >>> import csiapps
-        >>> csiapps.set_sandbox_mode(True)
-        >>> profiles = csiapps.fetch_profiles(filters={"sport_org_id": 7})
-        >>> rows = [csiapps.flatten_profile(p) for p in profiles]
+        ```python
+        import csiapps
+
+        csiapps.set_sandbox_mode(True)
+        profiles = csiapps.fetch_profiles(filters={"sport_org_id": 7})
+        rows = [csiapps.flatten_profile(p) for p in profiles]
+        ```
 
     Note:
         Pagination terminates if the server ever repeats a ``next`` URL, so a
@@ -428,10 +436,13 @@ def fetch_profile(
             responds with a status of 400 or higher.
 
     Example:
-        >>> import csiapps
-        >>> csiapps.set_sandbox_mode(True)
-        >>> csiapps.fetch_profile(1)   # doctest: +SKIP
-        {'id': 1, 'person': {...}, 'sport': {...}, 'status': 'ACTIVE', ...}
+        ```python
+        import csiapps
+
+        csiapps.set_sandbox_mode(True)
+        csiapps.fetch_profile(1)
+        # -> {'id': 1, 'person': {...}, 'sport': {...}, 'status': 'ACTIVE', ...}
+        ```
 
     Note:
         A production ``GET`` for a missing id raises ``RuntimeError`` (from the
@@ -488,9 +499,13 @@ def flatten_profile(p: dict) -> dict:
         source field is ``None``.
 
     Example:
-        >>> import csiapps, pandas as pd
-        >>> profiles = csiapps.fetch_profiles()          # doctest: +SKIP
-        >>> df = pd.DataFrame(csiapps.flatten_profile(p) for p in profiles)
+        ```python
+        import csiapps
+        import pandas as pd
+
+        profiles = csiapps.fetch_profiles()
+        df = pd.DataFrame(csiapps.flatten_profile(p) for p in profiles)
+        ```
     """
     person = p.get("person") or {}
     sport = p.get("sport") or {}

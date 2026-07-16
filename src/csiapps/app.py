@@ -143,12 +143,15 @@ def ui_wrapper(*args: TagChild, sandbox: bool | None = None) -> Tag:
         A ``ui.page_fluid`` page containing the chrome and the supplied UI.
 
     Example:
-        >>> from shiny import ui
-        >>> import csiapps
-        >>> app_ui = csiapps.ui_wrapper(
-        ...     ui.h2("My app"),
-        ...     ui.input_action_button("logout", "Log out"),
-        ... )   # doctest: +SKIP
+        ```python
+        from shiny import ui
+        import csiapps
+
+        app_ui = csiapps.ui_wrapper(
+            ui.h2("My app"),
+            ui.input_action_button("logout", "Log out"),
+        )
+        ```
 
     Note:
         The chrome styles are scoped by id and marked ``!important`` so a wrapped
@@ -234,11 +237,15 @@ def server_wrapper(
         Callable: A server function to hand to Shiny's ``App(app_ui, server)``.
 
     Example:
-        >>> from shiny import App
-        >>> import csiapps
-        >>> def my_server(input, output, session):
-        ...     ...
-        >>> app = App(app_ui, csiapps.server_wrapper(my_server))   # doctest: +SKIP
+        ```python
+        from shiny import App
+        import csiapps
+
+        def my_server(input, output, session):
+            ...
+
+        app = App(app_ui, csiapps.server_wrapper(my_server))
+        ```
 
     Note:
         The wrapper registers a logout effect bound to an ``input.logout``

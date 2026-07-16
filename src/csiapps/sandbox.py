@@ -88,13 +88,15 @@ def register_sandbox_schema(source_uuid: str, schema: dict | str) -> dict:
             JSON string, or readable JSON file.
 
     Example:
-        >>> import csiapps
-        >>> csiapps.set_sandbox_mode(True)
-        >>> csiapps.register_sandbox_schema(
-        ...     "hr-source",
-        ...     {"type": "object", "required": ["athlete_id", "hr"]},
-        ... )   # doctest: +ELLIPSIS
-        {'type': 'object', ...}
+        ```python
+        import csiapps
+
+        csiapps.set_sandbox_mode(True)
+        csiapps.register_sandbox_schema(
+            "hr-source",
+            {"type": "object", "required": ["athlete_id", "hr"]},
+        )
+        ```
 
     Note:
         Validation uses ``jsonschema`` (Draft 7) where the R package used Ajv via
@@ -138,9 +140,12 @@ def clear_sandbox(source_uuid: str | None = None) -> None:
         None
 
     Example:
-        >>> import csiapps
-        >>> csiapps.clear_sandbox("hr-source")   # one source
-        >>> csiapps.clear_sandbox()              # everything
+        ```python
+        import csiapps
+
+        csiapps.clear_sandbox("hr-source")   # one source
+        csiapps.clear_sandbox()              # everything
+        ```
     """
     if source_uuid is None:
         _state["schemas"] = {}
@@ -184,9 +189,12 @@ def browse_sandbox(source_uuid: str | None = None) -> str:
             because nothing has been ingested for that source.
 
     Example:
-        >>> import csiapps
-        >>> csiapps.browse_sandbox("hr-source")   # doctest: +SKIP
-        '/tmp/csiapps_sandbox_ab12cd/hr-source'
+        ```python
+        import csiapps
+
+        csiapps.browse_sandbox("hr-source")
+        # -> '/tmp/csiapps_sandbox_ab12cd/hr-source'
+        ```
     """
     target = sandbox_dir()
     if source_uuid is not None:
@@ -322,10 +330,13 @@ def create_sport_org(name: str, id: int | None = None) -> dict:
             read by sandbox helpers and have no effect in production.
 
     Example:
-        >>> import csiapps
-        >>> csiapps.set_sandbox_mode(True)
-        >>> csiapps.create_sport_org("Rowing", id=7)
-        {'id': 7, 'name': 'Rowing', 'annual_cycle_start': '...'}
+        ```python
+        import csiapps
+
+        csiapps.set_sandbox_mode(True)
+        csiapps.create_sport_org("Rowing", id=7)
+        # -> {'id': 7, 'name': 'Rowing', 'annual_cycle_start': '2026-07-16'}
+        ```
     """
     if not config.is_sandbox_mode():
         warnings.warn(
@@ -399,12 +410,14 @@ def create_profile(
             only read by sandbox helpers and have no effect in production.
 
     Example:
-        >>> import csiapps
-        >>> csiapps.set_sandbox_mode(True)
-        >>> csiapps.create_sport_org("Rowing", id=7)   # doctest: +SKIP
-        >>> athletes = csiapps.create_profile(3, sport_org_id=7)
-        >>> len(athletes)
-        3
+        ```python
+        import csiapps
+
+        csiapps.set_sandbox_mode(True)
+        csiapps.create_sport_org("Rowing", id=7)
+        athletes = csiapps.create_profile(3, sport_org_id=7)
+        len(athletes)   # -> 3
+        ```
 
     Note:
         Random names use ``faker`` where the R package used the ``babynames``

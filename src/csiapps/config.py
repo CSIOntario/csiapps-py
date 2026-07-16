@@ -48,8 +48,11 @@ def set_institute(institute: str = "csipacific") -> None:
         ValueError: If ``institute`` is not one of the two supported values.
 
     Example:
-        >>> import csiapps
-        >>> csiapps.set_institute("csiontario")
+        ```python
+        import csiapps
+
+        csiapps.set_institute("csiontario")
+        ```
 
     Note:
         This only selects the target host; it does not authenticate. See
@@ -100,11 +103,14 @@ def set_sandbox_mode(enabled: bool | None) -> None:
         Pin sandbox mode on for a test, then restore environment-based
         resolution afterwards:
 
-        >>> import csiapps
-        >>> csiapps.set_sandbox_mode(True)
-        >>> csiapps.is_sandbox_mode()
-        True
-        >>> csiapps.set_sandbox_mode(None)  # back to CSIAPPS_ENV
+        ```python
+        import csiapps
+
+        csiapps.set_sandbox_mode(True)
+        csiapps.is_sandbox_mode()   # -> True
+
+        csiapps.set_sandbox_mode(None)   # back to CSIAPPS_ENV
+        ```
 
     Note:
         Only the literal ``True`` enables sandbox mode; any other truthy value is
@@ -140,11 +146,14 @@ def is_sandbox_mode() -> bool:
         locally), ``False`` if requests go to the live warehouse.
 
     Example:
-        >>> import os, csiapps
-        >>> csiapps.set_sandbox_mode(None)          # use the environment
-        >>> os.environ["CSIAPPS_ENV"] = "production"
-        >>> csiapps.is_sandbox_mode()
-        False
+        ```python
+        import os
+        import csiapps
+
+        csiapps.set_sandbox_mode(None)              # use the environment
+        os.environ["CSIAPPS_ENV"] = "production"
+        csiapps.is_sandbox_mode()                   # -> False
+        ```
     """
     override = _state["sandbox_override"]
     if override is not None:
