@@ -14,6 +14,7 @@ across the porting phases (see ``PORTING_PLAN.md``):
 """
 
 from .auth import check_secrets
+from .client import fetch_org_options, fetch_profile, fetch_profiles, make_request
 from .config import is_sandbox_mode, set_institute, set_sandbox_mode
 
 __version__ = "0.1.0"
@@ -21,7 +22,11 @@ __version__ = "0.1.0"
 __all__ = [
     "__version__",
     "check_secrets",
+    "fetch_org_options",
+    "fetch_profile",
+    "fetch_profiles",
     "is_sandbox_mode",
+    "make_request",
     "set_institute",
     "set_sandbox_mode",
 ]

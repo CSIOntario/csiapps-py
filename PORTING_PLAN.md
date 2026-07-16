@@ -107,8 +107,17 @@ alongside the module it covers:
   set_sandbox_mode, URL helpers) + `auth.py` (PKCE stdlib, token exchange,
   check_secrets). Ported the `is_sandbox_mode` portion of `test-sandbox-mode.R`
   plus PKCE round-trip / token-exchange / check_secrets tests (16 passing).
-- [ ] **Phase 3 — client.** `client.py`: `make_request`, pagination, the three
-  `fetch_*`. Mock HTTP with `respx`.
+- [x] **Phase 3 — client.** `client.py`: `make_request` (retry + pagination),
+  `fetch_org_options`, `fetch_profiles` (auto-paginate), `fetch_profile`, and
+  per-session `current_token()` (contextvar → `CSIAPPS_ACCESS_TOKEN`). Sandbox
+  branches delegate to `csiapps.sandbox` internals (lazy import) landing in
+  phase 4. HTTP paths tested with `respx` (27 passing).
+
+  > **Phase 4 must provide these in `sandbox.py`:** `_make_sandbox_request(...)`,
+  > `_sandbox_org_options()`, `_sandbox_profiles(sport_org_id)`,
+  > `_sandbox_profile(profile_id)` — the delegation targets `client.py` calls.
+  > `flatten_record` (R internal, unexported, uncalled within the package) was
+  > **skipped**; add it only if a consuming app actually needs it.
 - [ ] **Phase 4 — sandbox.** `sandbox.py`: router, ingest, schema validation,
   dummy registry. Port `test-sandbox*.R` → pytest.
 - [ ] **Phase 5 — app wrapper.** `app.py` (Shiny for Python).
