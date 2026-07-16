@@ -103,8 +103,10 @@ alongside the module it covers:
 
 - [x] **Phase 1 — Scaffold.** New repo, `pyproject.toml` (uv/hatchling), CI
   (pytest + ruff), package skeleton, this plan.
-- [ ] **Phase 2 — config + auth.** `config.py`, `auth.py`. Pure logic; port
-  `test-sandbox-mode.R` (sandbox-mode resolution) + PKCE round-trip tests.
+- [x] **Phase 2 — config + auth.** `config.py` (set_institute, is_sandbox_mode,
+  set_sandbox_mode, URL helpers) + `auth.py` (PKCE stdlib, token exchange,
+  check_secrets). Ported the `is_sandbox_mode` portion of `test-sandbox-mode.R`
+  plus PKCE round-trip / token-exchange / check_secrets tests (16 passing).
 - [ ] **Phase 3 — client.** `client.py`: `make_request`, pagination, the three
   `fetch_*`. Mock HTTP with `respx`.
 - [ ] **Phase 4 — sandbox.** `sandbox.py`: router, ingest, schema validation,

@@ -13,6 +13,15 @@ across the porting phases (see ``PORTING_PLAN.md``):
 * ``app``     -- ui_wrapper, server_wrapper, global_wrapper (phase 5)
 """
 
+from .auth import check_secrets
+from .config import is_sandbox_mode, set_institute, set_sandbox_mode
+
 __version__ = "0.1.0"
 
-__all__ = ["__version__"]
+__all__ = [
+    "__version__",
+    "check_secrets",
+    "is_sandbox_mode",
+    "set_institute",
+    "set_sandbox_mode",
+]
