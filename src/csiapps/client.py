@@ -13,9 +13,9 @@ They are imported lazily so this module has no import-time dependency on the
 sandbox layer.
 """
 
-import contextvars
 import os
 import time
+import weakref
 from urllib.parse import quote
 
 import httpx
@@ -23,22 +23,41 @@ import httpx
 from . import config
 
 # Per-session access token, set by the Shiny app wrapper (server_wrapper) so
-# concurrent users never share a token. Outside a session it is None and we fall
-# back to the process-wide env var -- mirrors R's .current_token() reading
-# session$userData$csiapps_token then CSIAPPS_ACCESS_TOKEN.
-_session_token: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "csiapps_session_token", default=None
-)
+# concurrent users never share a token. Keyed on the Shiny session object; read
+# back via the active session -- the faithful analog of R's .current_token()
+# reading session$userData$csiapps_token, then falling back to the process-wide
+# CSIAPPS_ACCESS_TOKEN env var outside any session.
+_session_tokens: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
 # Transient statuses worth retrying (httr2 req_retry retried on these).
 _RETRY_STATUSES = {429, 500, 502, 503, 504}
 
 
+def _get_current_session():
+    # Indirection so tests can stub the active session without a running app.
+    try:
+        from shiny.session import get_current_session
+
+        return get_current_session()
+    except Exception:
+        return None
+
+
+def set_session_token(session, token) -> None:
+    """Store (or clear, when ``token`` is falsy) the access token for a session."""
+    if token:
+        _session_tokens[session] = token
+    else:
+        _session_tokens.pop(session, None)
+
+
 def current_token() -> str:
     """Resolve the access token: per-session first, then ``CSIAPPS_ACCESS_TOKEN``."""
-    tok = _session_token.get()
-    if tok:
-        return tok
+    session = _get_current_session()
+    if session is not None:
+        tok = _session_tokens.get(session)
+        if tok:
+            return tok
     return os.environ.get("CSIAPPS_ACCESS_TOKEN", "")
 
 

@@ -81,11 +81,11 @@ Two gotchas:
 * **`shinyjs` has no Python port.** Only used for
   `runjs("window.location.href = ...")`. Replace with the same custom-message
   handler the redirect already uses — no dependency; `useShinyjs()` drops out.
-* **Per-session token** (`session$userData$csiapps_token`): the Shiny for Python
-  server closure is already per-session, so the cross-user-leakage fix is free.
-  `make_request()` is called outside that closure, so `.current_token()` finds
-  the active session via a `contextvar` set on session start, falling back to
-  the `CSIAPPS_ACCESS_TOKEN` env var (exactly as R does).
+* **Per-session token** (`session$userData$csiapps_token`): implemented as a
+  `WeakKeyDictionary` keyed on the Shiny session (`client.set_session_token`),
+  read back by `client.current_token()` via `shiny.session.get_current_session()`,
+  falling back to `CSIAPPS_ACCESS_TOKEN`. (A `contextvar`, tried in phase 3, does
+  **not** work: Shiny reactive contexts don't propagate it across effects.)
 
 ## Verification strategy
 
@@ -125,7 +125,17 @@ alongside the module it covers:
   `make_request` routing + `fetch_*` sandbox cases (69 passing total). Validator
   wording adapted Ajv→jsonschema ("too short" vs "fewer than 10 characters").
   `flatten_record` and its test remain skipped (see phase 3 note).
-- [ ] **Phase 5 — app wrapper.** `app.py` (Shiny for Python).
+- [x] **Phase 5 — app wrapper.** `app.py` (Shiny for Python): `ui_wrapper`
+  (navbar/footer/chrome, sandbox banner, auth-status), `server_wrapper` (OAuth2
+  PKCE login + simulated sandbox login, per-session token, `/me` load, logout),
+  `global_wrapper`. `shinyjs` dropped (replaced by a `csip_reset`
+  custom-message handler); message-sending effects are `async`. Ported the
+  `ui_wrapper`/`server_wrapper`/`global_wrapper` cases from
+  `test-sandbox-wrapper.R` (77 passing); the deep `testServer` reactive cases
+  have no simple Shiny-for-Python equivalent, so sandbox-seed + auth-status
+  logic is covered via extracted pure helpers, and a real `App` is smoke-built.
+  Phase 3's token mechanism was corrected here (contextvar → session
+  `WeakKeyDictionary`).
 - [ ] **Phase 6 — docs + publish.** mkdocs-material (≈ pkgdown), examples,
   PyPI release.
 

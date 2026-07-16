@@ -13,6 +13,7 @@ across the porting phases (see ``PORTING_PLAN.md``):
 * ``app``     -- ui_wrapper, server_wrapper, global_wrapper (phase 5)
 """
 
+from .app import global_wrapper, server_wrapper, ui_wrapper
 from .auth import check_secrets
 from .client import fetch_org_options, fetch_profile, fetch_profiles, make_request
 from .config import is_sandbox_mode, set_institute, set_sandbox_mode
@@ -36,9 +37,12 @@ __all__ = [
     "fetch_org_options",
     "fetch_profile",
     "fetch_profiles",
+    "global_wrapper",
     "is_sandbox_mode",
     "make_request",
     "register_sandbox_schema",
+    "server_wrapper",
     "set_institute",
     "set_sandbox_mode",
+    "ui_wrapper",
 ]

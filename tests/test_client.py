@@ -31,11 +31,16 @@ def test_current_token_env_fallback(monkeypatch):
 
 def test_current_token_session_wins(monkeypatch):
     monkeypatch.setenv("CSIAPPS_ACCESS_TOKEN", "envtok")
-    tok = client._session_token.set("sesstok")
-    try:
-        assert current_token() == "sesstok"
-    finally:
-        client._session_token.reset(tok)
+
+    class FakeSession:  # weak-referenceable stand-in for a Shiny session
+        pass
+
+    sess = FakeSession()
+    monkeypatch.setattr(client, "_get_current_session", lambda: sess)
+    client.set_session_token(sess, "sesstok")
+    assert current_token() == "sesstok"
+    client.set_session_token(sess, None)
+    assert current_token() == "envtok"
 
 
 def test_production_requires_token():
