@@ -136,8 +136,13 @@ alongside the module it covers:
   logic is covered via extracted pure helpers, and a real `App` is smoke-built.
   Phase 3's token mechanism was corrected here (contextvar → session
   `WeakKeyDictionary`).
-- [ ] **Phase 6 — docs + publish.** mkdocs-material (≈ pkgdown), examples,
-  PyPI release.
+- [x] **Phase 6 — docs + packaging.** mkdocs-material + mkdocstrings site
+  (`mkdocs.yml`, `docs/`), runnable `examples/` (`warehouse_ingest.py`,
+  `app.py`), README quickstart. `uv build` produces sdist + wheel; wheel
+  verified to install and import in a clean venv.
+  **PyPI publish is intentionally NOT done here** — it is an outward-facing
+  release and requires credentials the assistant cannot handle. Publish with
+  `uv publish` (or `twine upload dist/*`) when ready.
 
 Phases 1–4 are framework-independent and safe to build in any order after 1.
 
