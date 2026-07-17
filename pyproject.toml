@@ -1,13 +1,13 @@
 [project]
 name = "csiapps"
-version = "0.1.0"
+version = "0.1.1"
 description = "Helper functions and utilities for CSI data warehouse ingestion and Shiny web applications (Python port of the csiapps R package)."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 authors = [
     { name = "David Awosoga", email = "dawosoga@csiontario.ca" },
-    { name = "Kyu Min Shim" },
+    { name = "Kyu Min Shim", email = "kmshim@uwaterloo.ca" },
 ]
 keywords = ["csi", "warehouse", "shiny", "oauth2", "csiontario"]
 dependencies = [
