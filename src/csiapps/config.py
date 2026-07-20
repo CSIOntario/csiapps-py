@@ -84,7 +84,7 @@ def token_url() -> str:
 
 
 def userinfo_url() -> str:
-    return f"{site_url()}/api/csiauth/me"
+    return f"{site_url()}/api/csiauth/me/"
 
 
 def set_sandbox_mode(enabled: bool | None) -> None:

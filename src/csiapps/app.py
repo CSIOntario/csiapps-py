@@ -336,6 +336,7 @@ def server_wrapper(
                         httpx.get,
                         userinfo_url,
                         headers={"Authorization": f"Bearer {access_token}"},
+                        follow_redirects=True,
                     )
                     resp.raise_for_status()
                     userinfo.set(resp.json())
