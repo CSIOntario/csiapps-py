@@ -26,4 +26,4 @@ uv.lock
 .DS_Store
 
 # PLAN
-# PORTING_PLAN.md
+PORTING_PLAN.md
