@@ -1,6 +1,6 @@
 # csiapps (Python)
 
-Python port of the CSIO [`csiapps`](https://github.com/CSIOntario/csiapps) R
+Python port of the CSIO [`csiapps`](https://github.com/CSIOntario/csiapps-r) R
 package. Helper functions and utilities for CSI data warehouse ingestion and
 [Shiny for Python](https://shiny.posit.co/py/) web applications.
 
@@ -31,8 +31,8 @@ page = csiapps.make_request("api/warehouse/data-records", query={"source_uuid": 
 print(page["count"])   # 1
 ```
 
-See the [cross-language documentation](https://csiontario.github.io/csiapps-py/)
-(R and Python side by side, plus a [parity checklist](https://csiontario.github.io/csiapps-py/parity/))
+See the [cross-language documentation](https://csiontario.github.io/csiapps/)
+(R and Python side by side, plus a [parity checklist](https://csiontario.github.io/csiapps/parity/))
 and the runnable [`examples/`](examples/) (`warehouse_ingest.py`, `app.py`).
 
 ## Development

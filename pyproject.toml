@@ -27,10 +27,6 @@ dev = [
     "ruff>=0.6",
     "respx>=0.21",  # httpx mocking for client tests (phase 3)
 ]
-docs = [
-    "mkdocs-material>=9.5",
-    "mkdocstrings[python]>=0.25",
-]
 
 [build-system]
 requires = ["hatchling"]
