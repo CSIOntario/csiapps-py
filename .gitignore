@@ -24,3 +24,6 @@ uv.lock
 
 # OS
 .DS_Store
+
+# PLAN
+PORTING_PLAN.md
