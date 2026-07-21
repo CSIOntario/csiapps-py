@@ -19,14 +19,19 @@ import weakref
 from urllib.parse import quote
 
 import httpx
+from shiny import reactive, req
 
 from . import config
 
 # Per-session access token, set by the Shiny app wrapper (server_wrapper) so
-# concurrent users never share a token. Keyed on the Shiny session object; read
-# back via the active session -- the faithful analog of R's .current_token()
-# reading session$userData$csiapps_token, then falling back to the process-wide
-# CSIAPPS_ACCESS_TOKEN env var outside any session.
+# concurrent users never share a token. Keyed on the Shiny session object, the
+# faithful analog of R storing the token on session$userData.
+#
+# The value is a reactive.value (not a plain string) so that reading it inside a
+# reactive context registers a dependency: an app reactive that calls a fetch_*
+# helper before login completes is cancelled quietly (see _auth_gate) and
+# re-runs on its own once server_wrapper stores the token. Lazily created so it
+# does not matter whether the wrapper or the app touches the session first.
 _session_tokens: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
 # Transient statuses worth retrying (httr2 req_retry retried on these).
@@ -43,22 +48,85 @@ def _get_current_session():
         return None
 
 
+def _in_reactive_context() -> bool:
+    # True inside a reactive effect/calc/render, where req() has a computation to
+    # cancel and re-run. Outside one (CLI, scripts, plain tests) req() would just
+    # raise, so callers there should fail loudly instead.
+    try:
+        from shiny.reactive._core import get_current_context
+
+        get_current_context()
+        return True
+    except Exception:
+        return False
+
+
+def _token_rv(session) -> "reactive.Value":
+    rv = _session_tokens.get(session)
+    if rv is None:
+        rv = reactive.value(None)
+        _session_tokens[session] = rv
+    return rv
+
+
 def set_session_token(session, token) -> None:
     """Store (or clear, when ``token`` is falsy) the access token for a session."""
-    if token:
-        _session_tokens[session] = token
-    else:
-        _session_tokens.pop(session, None)
+    _token_rv(session).set(token or None)
 
 
 def current_token() -> str:
-    """Resolve the access token: per-session first, then ``CSIAPPS_ACCESS_TOKEN``."""
+    """Resolve the access token: per-session first, then ``CSIAPPS_ACCESS_TOKEN``.
+
+    Inside a Shiny session the token is read from the session's reactive value --
+    reactively when a reactive context is active (so the caller re-runs when the
+    token changes), and via ``reactive.isolate`` otherwise. Outside a session it
+    falls back to the ``CSIAPPS_ACCESS_TOKEN`` environment variable.
+    """
     session = _get_current_session()
     if session is not None:
-        tok = _session_tokens.get(session)
+        rv = _token_rv(session)
+        if _in_reactive_context():
+            tok = rv()  # establishes a dependency -> re-run on login
+        else:
+            with reactive.isolate():
+                tok = rv()
         if tok:
             return tok
     return os.environ.get("CSIAPPS_ACCESS_TOKEN", "")
+
+
+def token_ready() -> bool:
+    """Whether a CSIAPPS access token is available for the current context.
+
+    Returns ``True`` once a token is available: inside a Shiny app wrapped by
+    :func:`csiapps.server_wrapper`, the per-session token stored at login;
+    outside Shiny, the ``CSIAPPS_ACCESS_TOKEN`` environment variable.
+
+    The check is reactive-friendly: called from a reactive context it takes a
+    dependency on the session's token, so a guard like ``req(token_ready())``
+    re-fires automatically when login completes instead of sticking in the
+    cancelled state. :func:`make_request` and the ``fetch_*`` helpers already
+    gate themselves this way, so an explicit guard is only needed for work that
+    should wait for login without making an API call (e.g. processing an
+    uploaded file).
+    """
+    return bool(current_token())
+
+
+def _auth_gate(what: str):
+    """Handle a missing token: gate quietly inside a reactive, else raise.
+
+    Inside a reactive context a missing token is the normal pre-login state, so
+    cancel the computation with ``req(False)``; because ``current_token`` read
+    the token's reactive value, the computation re-runs once login completes.
+    Outside a reactive context (CLI, scripts) a missing token is a configuration
+    error, so fail loudly.
+    """
+    if _in_reactive_context():
+        req(False)
+    raise RuntimeError(
+        f"{what}: no CSIAPPS_ACCESS_TOKEN set; user not authenticated?"
+    )
 
 
 def _perform(method, url, *, params=None, json=None, headers=None, timeout=20, max_tries=3):
@@ -105,9 +173,7 @@ def _http_request(
     endpoint, method, body, query, headers, token, timeout, verbose, paginate, max_pages
 ):
     if not token:
-        raise RuntimeError(
-            "make_request: no CSIAPPS_ACCESS_TOKEN set; user not authenticated?"
-        )
+        _auth_gate("make_request")
 
     url = config.site_url().rstrip("/") + "/" + endpoint.lstrip("/")
     req_headers = {"Authorization": f"Bearer {token}"}
@@ -285,9 +351,7 @@ def fetch_org_options(token: str | None = None, sandbox: bool | None = None) -> 
     if not token:
         token = current_token()
     if not token:
-        raise RuntimeError(
-            "fetch_org_options: no CSIAPPS_ACCESS_TOKEN set; user not authenticated?"
-        )
+        _auth_gate("fetch_org_options")
 
     url = config.site_url().rstrip("/") + config.SPORT_ORG_ENDPOINT
     resp = _perform(
@@ -371,9 +435,7 @@ def fetch_profiles(
     if not token:
         token = current_token()
     if not token:
-        raise RuntimeError(
-            "fetch_profiles: no CSIAPPS_ACCESS_TOKEN set; user not authenticated?"
-        )
+        _auth_gate("fetch_profiles")
 
     url = config.site_url().rstrip("/") + config.PROFILE_ENDPOINT
     params = {**filters, "limit": 100, "offset": 0}
@@ -459,9 +521,7 @@ def fetch_profile(
     if not token:
         token = current_token()
     if not token:
-        raise RuntimeError(
-            "fetch_profile: no CSIAPPS_ACCESS_TOKEN set; user not authenticated?"
-        )
+        _auth_gate("fetch_profile")
 
     # URL-encode the id so an unusual value can't alter the request path.
     enc_id = quote(str(profile_id), safe="")

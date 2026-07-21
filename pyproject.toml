@@ -1,6 +1,6 @@
 [project]
 name = "csiapps"
-version = "0.1.2"
+version = "0.1.3"
 description = "Helper functions and utilities for CSI data warehouse ingestion and Shiny web applications (Python port of the csiapps R package)."
 readme = "README.md"
 license = { file = "LICENSE" }
