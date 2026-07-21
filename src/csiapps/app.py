@@ -65,6 +65,15 @@ def _csi_chrome_styles():
     #csi-navbar .navbar-nav .nav-link {{
       color: {bar_text} !important;
     }}
+    /* Pin the logo size. The height is set as an HTML attribute (low priority),
+       so a wrapped app's own `img {{}}` rule (e.g. `height:auto`/`max-width:100%`
+       from a theme or Bootstrap) would otherwise resize the logo and push it
+       through the red accent line. */
+    #csi-navbar .navbar-brand img {{
+      height: 48px !important;
+      width: auto !important;
+      max-width: none !important;
+    }}
     #footer {{
       background-color: {bar_bg} !important;
       color: {bar_text} !important;
