@@ -21,6 +21,7 @@ from .client import (
     fetch_profiles,
     flatten_profile,
     make_request,
+    token_ready,
 )
 from .config import is_sandbox_mode, set_institute, set_sandbox_mode
 from .sandbox import (
@@ -31,7 +32,7 @@ from .sandbox import (
     register_sandbox_schema,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.1.3"
 
 __all__ = [
     "__version__",
@@ -50,5 +51,6 @@ __all__ = [
     "server_wrapper",
     "set_institute",
     "set_sandbox_mode",
+    "token_ready",
     "ui_wrapper",
 ]
