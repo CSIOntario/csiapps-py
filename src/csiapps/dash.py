@@ -1,6 +1,6 @@
 """Dash wrappers for CSIAPPS apps.
 
-The Dash counterpart of :mod:`csiapps.app`: the same three things the Shiny
+The Dash counterpart of :mod:`csiapps.shiny`: the same three things the Shiny
 wrapper provides — authentication, ambient data access, and the CSI chrome —
 behind the same vocabulary.
 
@@ -56,11 +56,38 @@ REDIRECT_ROUTE = f"{AUTH_PREFIX}/redirect"
 LOGOUT_ROUTE = f"{AUTH_PREFIX}/logout"
 CSS_ROUTE = f"{AUTH_PREFIX}/chrome.css"
 
-# Flask session keys. The token key is client.FLASK_TOKEN_KEY so there is a
-# single definition shared with the reader.
-TOKEN_KEY = client.FLASK_TOKEN_KEY
+# Flask session keys. The token key is defined here (this module owns the Flask
+# side of token storage) and read back through the adapter below.
+FLASK_TOKEN_KEY = "csi_token"
+TOKEN_KEY = FLASK_TOKEN_KEY
 USER_KEY = "csi_user"
 NEXT_KEY = "csi_next"
+
+
+class _FlaskTokenAdapter:
+    """Reads ``session['csi_token']`` for :func:`csiapps.client.current_token`.
+
+    Returns ``None`` outside a request context, so it is inert in any non-Dash
+    process. A missing token is never handled here: behind :func:`attach`'s guard
+    an unauthenticated user never reaches a callback, so a missing token is a
+    real misconfiguration and the core should raise loudly.
+    """
+
+    def read_token(self):
+        if not has_request_context():
+            return None
+        try:
+            return session.get(FLASK_TOKEN_KEY) or None
+        except Exception:
+            # An unreadable/tampered session cookie must not take the app down;
+            # fall through to the env var and the normal unauthenticated gate.
+            return None
+
+    def handle_missing_token(self) -> bool:
+        return False
+
+
+client.register_token_adapter(_FlaskTokenAdapter())
 
 # Flask refuses to register two view functions on one endpoint name, and
 # ProxyFix would stack if applied twice, so attach() is made idempotent with a
@@ -407,7 +434,7 @@ def _auth_status(sandbox):
 def layout_wrapper(*children, nav_links=None, sandbox=None):
     """Wrap an app's layout in the standard CSI chrome.
 
-    The Dash counterpart of [`ui_wrapper`][csiapps.app.ui_wrapper]: same navbar,
+    The Dash counterpart of [`ui_wrapper`][csiapps.shiny.ui_wrapper]: same navbar,
     footer, auth-status line and sandbox banner, rendered from the same
     constants in `csiapps.chrome`.
 

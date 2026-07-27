@@ -6,7 +6,10 @@ on:
   pull_request:
 
 jobs:
-  test:
+  # core-only: no framework extras. `import csiapps` must succeed with neither
+  # Shiny nor Dash installed, the core suite must pass, and both frameworks must
+  # be genuinely absent -- this is the pure-ingestion install.
+  core-only:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -17,48 +20,97 @@ jobs:
         uses: astral-sh/setup-uv@v3
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
-      - name: Install deps
-        run: uv sync --python ${{ matrix.python-version }}
+      # No framework extras. Every `uv run` below needs --no-sync: without it uv
+      # re-syncs to [tool.uv] default-groups and quietly puts the frameworks
+      # back, which would make the isolation a no-op.
+      - name: Install core only
+        run: uv sync --no-group shiny-tests --no-group dash-tests --python ${{ matrix.python-version }}
+      - name: Assert no web framework is installed
+        run: |
+          uv run --no-sync python -c "
+          import importlib.util as u
+          for mod in ('shiny', 'dash', 'dash_auth', 'flask'):
+              assert u.find_spec(mod) is None, mod + ' unexpectedly installed'
+          print('confirmed: no shiny, no dash, no flask')
+          "
+      - name: Assert csiapps imports and the wrappers fail helpfully
+        run: |
+          uv run --no-sync python -c "
+          import csiapps
+          assert not hasattr(csiapps, 'ui_wrapper'), 'wrappers must not be top-level'
+          for sub in ('csiapps.shiny', 'csiapps.dash'):
+              try:
+                  __import__(sub)
+              except ImportError:
+                  pass
+              else:
+                  raise SystemExit(sub + ' imported without its extra')
+          print('ok')
+          "
       - name: Lint
-        run: uv run ruff check .
-      - name: Test
-        run: uv run pytest
+        run: uv run --no-sync ruff check .
+      - name: Test (core suite; framework suites skip themselves)
+        run: uv run --no-sync pytest
 
-  # An install without the `dash` extra -- i.e. every csiapps deployment that
-  # exists today. Adding Dash support has to be invisible here: the existing
-  # suite passes unchanged, and importing csiapps.dash raises a guided
-  # ImportError rather than a bare ModuleNotFoundError from a submodule.
-  test-without-dash-extra:
+  # shiny: install [shiny] only. The Shiny suite runs; Dash must be absent.
+  shiny:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
         uses: astral-sh/setup-uv@v3
-      # Every `uv run` below needs --no-sync: without it uv re-syncs to
-      # [tool.uv] default-groups and quietly puts Dash back, which would make
-      # this whole job a no-op.
-      - name: Install deps without the dash extra
+      - name: Install shiny extra only
         run: uv sync --no-group dash-tests
-      - name: Assert Dash and Flask are genuinely absent
+      - name: Assert Dash is genuinely absent
         run: |
           uv run --no-sync python -c "
           import importlib.util as u
-          for mod in ('dash', 'dash_auth', 'flask'):
+          for mod in ('dash', 'dash_auth'):
               assert u.find_spec(mod) is None, mod + ' unexpectedly installed'
-          print('confirmed: no dash, no flask')
-          "
-      - name: Assert csiapps imports and csiapps.dash fails helpfully
-        run: |
-          uv run --no-sync python -c "
-          import csiapps
-          assert csiapps.ui_wrapper is not None
-          try:
-              import csiapps.dash
-          except ImportError as e:
-              assert \"pip install 'csiapps[dash]'\" in str(e), str(e)
-              print('guided ImportError:', e)
-          else:
-              raise SystemExit('expected ImportError but import succeeded')
+          import csiapps.shiny  # must import cleanly
+          print('confirmed: shiny present, dash absent')
           "
       - name: Test
         run: uv run --no-sync pytest
+
+  # dash: install [dash] only. The Dash suite runs; Shiny must be absent.
+  dash:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+      - name: Install dash extra only
+        run: uv sync --no-group shiny-tests
+      - name: Assert Shiny is genuinely absent
+        run: |
+          uv run --no-sync python -c "
+          import importlib.util as u
+          assert u.find_spec('shiny') is None, 'shiny unexpectedly installed'
+          import csiapps.dash  # must import cleanly
+          print('confirmed: dash present, shiny absent')
+          "
+      - name: Test
+        run: uv run --no-sync pytest
+
+  # Guard: no shiny/flask/dash/dash_auth/werkzeug import may appear anywhere in
+  # src/csiapps/ except the two framework modules. This is what keeps the core
+  # framework-independent; grep for the imports rather than trusting review.
+  import-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert only shiny.py / dash.py import a web framework
+        run: |
+          # Match real top-level imports of the framework packages (`import dash`,
+          # `from flask import ...`), not our own `from csiapps.shiny import ...`
+          # submodule references or docstring prose.
+          offenders=$(grep -rnE '^[[:space:]]*(import|from)[[:space:]]+(shiny|flask|dash|dash_auth|werkzeug)\b' \
+            src/csiapps/ --include='*.py' \
+            | grep -vE '/(shiny|dash)\.py:' || true)
+          if [ -n "$offenders" ]; then
+            echo "Web-framework import outside shiny.py/dash.py:"
+            echo "$offenders"
+            exit 1
+          fi
+          echo "confirmed: core imports no web framework"

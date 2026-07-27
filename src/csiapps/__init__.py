@@ -10,21 +10,17 @@ across the porting phases (see ``PORTING_PLAN.md``):
 * ``auth``    -- check_secrets, PKCE, token exchange       (phase 2)
 * ``client``  -- make_request, fetch_org_options/profiles  (phase 3)
 * ``sandbox`` -- register_sandbox_schema, create_*, ...     (phase 4)
-* ``app``     -- ui_wrapper, server_wrapper                 (phase 5)
 * ``chrome``  -- shared navbar/footer constants and copy    (phase 6)
-* ``dash``    -- attach, layout_wrapper                     (phase 6)
 
-Everything exported here is framework-independent except ``ui_wrapper`` and
-``server_wrapper``, which are Shiny. Dash support lives in the ``csiapps.dash``
-submodule and is imported explicitly, so it costs nothing to an app that does
-not use it:
+Everything exported here is framework-independent: ingestion, auth, the HTTP
+client, and the sandbox depend on no web framework, so ``import csiapps`` pulls
+in neither Shiny nor Dash. The web-app wrappers live in framework submodules,
+imported explicitly, each behind its own optional dependency:
 
-    from csiapps.dash import attach, layout_wrapper
-
-It requires the optional dependencies: ``pip install 'csiapps[dash]'``.
+    from csiapps.shiny import ui_wrapper, server_wrapper   # pip install 'csiapps[shiny]'
+    from csiapps.dash import layout_wrapper, attach        # pip install 'csiapps[dash]'
 """
 
-from .app import server_wrapper, ui_wrapper
 from .auth import check_secrets
 from .client import (
     fetch_org_options,
@@ -43,7 +39,7 @@ from .sandbox import (
     register_sandbox_schema,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "__version__",
@@ -59,9 +55,7 @@ __all__ = [
     "is_sandbox_mode",
     "make_request",
     "register_sandbox_schema",
-    "server_wrapper",
     "set_institute",
     "set_sandbox_mode",
     "token_ready",
-    "ui_wrapper",
 ]

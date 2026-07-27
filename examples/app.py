@@ -10,6 +10,7 @@ login is simulated; set CSIAPPS_ACCESS_TOKEN to have the header show your real
 from shiny import App, reactive, render, ui
 
 import csiapps
+from csiapps.shiny import server_wrapper, ui_wrapper
 
 # Seed dummy registration data (sandbox is the default mode).
 csiapps.set_institute("csiontario")
@@ -22,7 +23,7 @@ csiapps.create_profile(3, 200)
 # UI-construction time: fetch_org_options() needs the logged-in user's token,
 # which only exists once a session has authenticated. Start the select empty and
 # fill it in when the data arrives.
-app_ui = csiapps.ui_wrapper(
+app_ui = ui_wrapper(
     ui.input_select("org", "Organisation", choices={}),
     ui.h3("Athletes"),
     ui.output_ui("athletes"),
@@ -49,4 +50,4 @@ def app_server(input, output, session):
         return ui.tags.ul(*rows)
 
 
-app = App(app_ui, csiapps.server_wrapper(app_server))
+app = App(app_ui, server_wrapper(app_server))

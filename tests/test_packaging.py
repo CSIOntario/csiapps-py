@@ -1,7 +1,8 @@
-"""Import-surface guarantees for existing installs.
+"""Import-surface guarantees: the core depends on no web framework.
 
-Adding Dash support must be invisible to an app that does not use it. These run
-in subprocesses because they assert things about a *fresh* interpreter's
+The refactor's whole point is that `import csiapps` pulls in neither Shiny nor
+Dash, and that each framework wrapper installs and imports only its own
+framework. The subprocess tests assert things about a *fresh* interpreter's
 sys.modules, which the test session has already polluted.
 """
 
@@ -16,6 +17,9 @@ import csiapps
 
 PY = sys.executable
 
+requires_shiny = pytest.mark.skipif(
+    importlib.util.find_spec("shiny") is None, reason="csiapps[shiny] not installed"
+)
 requires_dash = pytest.mark.skipif(
     importlib.util.find_spec("dash") is None, reason="csiapps[dash] not installed"
 )
@@ -29,12 +33,13 @@ def run(code):
     return proc.stdout.strip()
 
 
-# ---- the public API is unchanged ---------------------------------------
+# ---- the public API is framework-independent ---------------------------
 
 
-def test_public_api_is_unchanged():
-    # The exact __all__ an existing app may rely on. csiapps.dash is imported as
-    # a submodule, deliberately never exported here.
+def test_public_api():
+    # The exact framework-independent __all__. The web-app wrappers are NOT here:
+    # they live in the csiapps.shiny / csiapps.dash submodules, imported
+    # explicitly, so importing csiapps costs no web framework.
     assert set(csiapps.__all__) == {
         "__version__",
         "browse_sandbox",
@@ -49,37 +54,45 @@ def test_public_api_is_unchanged():
         "is_sandbox_mode",
         "make_request",
         "register_sandbox_schema",
-        "server_wrapper",
         "set_institute",
         "set_sandbox_mode",
         "token_ready",
-        "ui_wrapper",
     }
     for name in csiapps.__all__:
         assert hasattr(csiapps, name), name
 
 
-def test_private_helpers_relocated_but_still_reachable():
-    # app._seed_token_value and app._signed_in_text moved into auth/chrome. The
-    # names stay bound in csiapps.app so nothing that reached for them breaks.
-    from csiapps import app, auth, chrome
+def test_wrappers_are_not_exported_from_the_package():
+    # The clean break: the Shiny wrappers no longer hang off the top-level
+    # package; consumers migrate to `from csiapps.shiny import ...`.
+    assert not hasattr(csiapps, "ui_wrapper")
+    assert not hasattr(csiapps, "server_wrapper")
 
-    assert app._seed_token_value is auth.seed_sandbox_token
-    assert app._signed_in_text is chrome.signed_in_text
-    assert app._FAVICON == chrome.FAVICON
-    assert app._logo_src() == chrome.logo_src()
+
+@requires_shiny
+def test_private_helpers_relocated_but_still_reachable():
+    # shiny._seed_token_value and shiny._signed_in_text are re-bound from
+    # auth/chrome. The names stay bound in csiapps.shiny so nothing that reached
+    # for them breaks.
+    from csiapps import auth, chrome
+    from csiapps import shiny as csishiny
+
+    assert csishiny._seed_token_value is auth.seed_sandbox_token
+    assert csishiny._signed_in_text is chrome.signed_in_text
+    assert csishiny._FAVICON == chrome.FAVICON
+    assert csishiny._logo_src() == chrome.logo_src()
 
 
 # ---- import purity -----------------------------------------------------
 
 
-def test_importing_csiapps_does_not_import_dash_or_flask():
-    # The regression that would quietly make Dash a hard dependency.
+def test_importing_csiapps_imports_no_web_framework():
+    # The regression that would quietly make any framework a hard dependency.
     loaded = run(
         """
         import sys
         import csiapps
-        leaked = sorted(m for m in ('dash', 'dash_auth', 'flask', 'werkzeug')
+        leaked = sorted(m for m in ('shiny', 'dash', 'dash_auth', 'flask', 'werkzeug')
                         if m in sys.modules)
         print(','.join(leaked))
         """
@@ -87,17 +100,35 @@ def test_importing_csiapps_does_not_import_dash_or_flask():
     assert loaded == ""
 
 
-@requires_dash
-def test_importing_csiapps_dash_does_not_break_the_shiny_wrapper():
-    # Both wrappers must coexist in one process: someone will import both while
-    # migrating an app.
+def test_importing_csiapps_registers_no_token_adapter():
+    # A framework adapter is registered only when its submodule is imported, so a
+    # bare `import csiapps` leaves the registry empty and current_token() resolves
+    # purely from the environment.
     out = run(
         """
         import csiapps
+        from csiapps import client
+        print(len(client._token_adapters))
+        """
+    )
+    assert out == "0"
+
+
+@requires_shiny
+@requires_dash
+def test_the_two_wrappers_coexist_in_one_process():
+    # Both frameworks must work in one process: someone will import both while
+    # migrating an app, and their adapters must not collide.
+    out = run(
+        """
+        import csiapps
+        from csiapps.shiny import ui_wrapper
         from csiapps.dash import attach, layout_wrapper
+        from csiapps import client
         csiapps.set_sandbox_mode(True)
-        assert 'csi-navbar' in str(csiapps.ui_wrapper())
+        assert 'csi-navbar' in str(ui_wrapper())
         assert 'csi-navbar' in str(layout_wrapper()())
+        assert len(client._token_adapters) == 2
         print('ok')
         """
     )
@@ -114,18 +145,26 @@ def test_csiapps_dash_is_not_auto_imported_by_the_package():
     assert loaded == "False"
 
 
+def test_csiapps_shiny_is_not_auto_imported_by_the_package():
+    loaded = run(
+        """
+        import sys, csiapps
+        print('csiapps.shiny' in sys.modules)
+        """
+    )
+    assert loaded == "False"
+
+
 # ---- behaviour without the optional extra ------------------------------
 
 
-def test_missing_extra_raises_a_guided_import_error():
+def test_missing_dash_extra_raises_a_guided_import_error():
     # Simulates `pip install csiapps` with no [dash]: the failure must name the
     # fix rather than surfacing a bare ModuleNotFoundError from a submodule.
     out = run(
         """
         import sys
         class Blocker:
-            def find_module(self, name, path=None):
-                return None
             def find_spec(self, name, path=None, target=None):
                 if name.split('.')[0] in ('dash', 'dash_auth'):
                     raise ImportError(f"No module named {name!r}")
@@ -143,55 +182,27 @@ def test_missing_extra_raises_a_guided_import_error():
     assert out.endswith("guided")
 
 
-def test_shiny_path_is_unaffected_without_flask():
-    # The client's Flask probe must be inert when Flask is absent -- this is the
-    # exact configuration of every current csiapps deployment.
+def test_core_works_with_no_web_framework_installed():
+    # The pure-ingestion path: block both frameworks, and csiapps core still
+    # imports and resolves the env token. This is the strict improvement over the
+    # old hard Shiny dependency.
     out = run(
         """
         import sys
         class Blocker:
             def find_spec(self, name, path=None, target=None):
-                if name.split('.')[0] == 'flask':
-                    raise ImportError('No module named flask')
+                if name.split('.')[0] in ('shiny', 'dash', 'dash_auth', 'flask'):
+                    raise ImportError(f"No module named {name!r}")
                 return None
         sys.meta_path.insert(0, Blocker())
 
         import os
         os.environ['CSIAPPS_ACCESS_TOKEN'] = 'envtok'
+        import csiapps
         from csiapps import client
-        assert client._get_flask_token() is None
-        assert client._flask_accessors is False       # probed once, then cached
+        assert client._token_adapters == []
         assert client.current_token() == 'envtok'
         assert client.token_ready() is True
-        print('ok')
-        """
-    )
-    assert out.endswith("ok")
-
-
-def test_token_resolution_stays_cheap_without_flask():
-    # A failed import is not cached by Python and re-walks sys.path on every
-    # attempt, so an uncached probe would tax every fetch_* call in every
-    # existing Shiny app. Assert the probe cost is amortised, not per-call.
-    out = run(
-        """
-        import sys, timeit
-        class Blocker:
-            def find_spec(self, name, path=None, target=None):
-                if name.split('.')[0] == 'flask':
-                    raise ImportError('No module named flask')
-                return None
-        sys.meta_path.insert(0, Blocker())
-
-        import os
-        os.environ['CSIAPPS_ACCESS_TOKEN'] = 'envtok'
-        from csiapps import client
-        client.current_token()                      # resolve the probe once
-        per_call = timeit.timeit(client.current_token, number=20000) / 20000
-        # A repeated failed import measured ~38us here; a cached probe is ~1-2us.
-        # 10us leaves ample headroom for a slow machine while still failing loudly
-        # if the caching is ever removed.
-        assert per_call < 10e-6, f'{per_call*1e6:.1f}us per call'
         print('ok')
         """
     )

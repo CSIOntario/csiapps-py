@@ -15,137 +15,56 @@ sandbox layer.
 
 import os
 import time
-import weakref
 from urllib.parse import quote
 
 import httpx
-from shiny import reactive, req
 
 from . import config
 
-# Per-session access token, set by the Shiny app wrapper (server_wrapper) so
-# concurrent users never share a token. Keyed on the Shiny session object, the
-# faithful analog of R storing the token on session$userData.
+# ---- token-adapter registry -------------------------------------------
 #
-# The value is a reactive.value (not a plain string) so that reading it inside a
-# reactive context registers a dependency: an app reactive that calls a fetch_*
-# helper before login completes is cancelled quietly (see _auth_gate) and
-# re-runs on its own once server_wrapper stores the token. Lazily created so it
-# does not matter whether the wrapper or the app touches the session first.
-_session_tokens: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+# The core resolves the per-context access token through a small registry of
+# adapters rather than knowing about any web framework. A framework submodule
+# (csiapps.shiny, csiapps.dash) registers an adapter when it is imported; a pure
+# ingestion script registers none and falls back to the environment. This is
+# what keeps client.py free of any shiny/flask import.
+#
+# An adapter is any object with two methods:
+#   read_token() -> str | None
+#       The token for the current context if this framework is active, else
+#       None (a Shiny adapter returns None with no active session, a Flask
+#       adapter returns None outside a request context).
+#   handle_missing_token() -> bool
+#       Called by the auth gate when no token was found. Return True if handled
+#       (e.g. Shiny quietly cancels a reactive), False to let the core raise.
+_token_adapters: list = []
+
+
+def register_token_adapter(adapter) -> None:
+    """Register a framework token adapter for token resolution (idempotent)."""
+    if adapter not in _token_adapters:
+        _token_adapters.append(adapter)
+
 
 # Transient statuses worth retrying (httr2 req_retry retried on these).
 _RETRY_STATUSES = {429, 500, 502, 503, 504}
 
-# Flask session key holding the access token. csiapps.dash writes it; this
-# module reads it. Named here so there is one definition of the key.
-FLASK_TOKEN_KEY = "csi_token"
-
-# Resolved on first use: the Flask session accessors, or False when Flask is not
-# installed. Cached deliberately -- a *failed* import is not recorded in
-# sys.modules, so Python re-walks sys.path on every attempt (~38us here, 20x the
-# cost of a cached import). current_token() runs on every fetch_* call and every
-# token_ready(), including inside Shiny reactives that re-fire often, so a
-# Shiny-only install must not pay that probe more than once.
-_flask_accessors = None
-
-
-def _get_current_session():
-    # Indirection so tests can stub the active session without a running app.
-    try:
-        from shiny.session import get_current_session
-
-        return get_current_session()
-    except Exception:
-        return None
-
-
-def _get_flask_token():
-    """The Flask half of token resolution: ``session["csi_token"]``, or ``None``.
-
-    Same lazy-import indirection as :func:`_get_current_session`, so there is no
-    import-time Flask dependency. Returns ``None`` both when Flask is absent and
-    when there is no active request context, which is what keeps the Shiny path
-    and the ``CSIAPPS_ACCESS_TOKEN`` fallback exactly as they were.
-    """
-    global _flask_accessors
-    if _flask_accessors is None:
-        try:
-            from flask import has_request_context, session
-
-            # `session` is a context-local proxy: safe to hold, resolves per
-            # request on attribute access.
-            _flask_accessors = (has_request_context, session)
-        except ImportError:
-            _flask_accessors = False
-    if _flask_accessors is False:
-        return None
-    has_request_context, session = _flask_accessors
-    try:
-        return session.get(FLASK_TOKEN_KEY) if has_request_context() else None
-    except Exception:
-        # An unreadable/tampered session cookie must not take the app down; fall
-        # through to the env var and then to the normal unauthenticated gate.
-        return None
-
-
-def _in_reactive_context() -> bool:
-    # True inside a reactive effect/calc/render, where req() has a computation to
-    # cancel and re-run. Outside one (CLI, scripts, plain tests) req() would just
-    # raise, so callers there should fail loudly instead.
-    try:
-        from shiny.reactive._core import get_current_context
-
-        get_current_context()
-        return True
-    except Exception:
-        return False
-
-
-def _token_rv(session) -> "reactive.Value":
-    rv = _session_tokens.get(session)
-    if rv is None:
-        rv = reactive.value(None)
-        _session_tokens[session] = rv
-    return rv
-
-
-def set_session_token(session, token) -> None:
-    """Store (or clear, when ``token`` is falsy) the access token for a session."""
-    _token_rv(session).set(token or None)
-
 
 def current_token() -> str:
-    """Resolve the access token: per-session first, then ``CSIAPPS_ACCESS_TOKEN``.
+    """Resolve the access token: framework adapters first, then env var.
 
-    Resolution order, first hit wins:
-
-    1. **Shiny session.** The token is read from the session's reactive value --
-       reactively when a reactive context is active (so the caller re-runs when
-       the token changes), and via ``reactive.isolate`` otherwise.
-    2. **Flask session** (``session["csi_token"]``), set by
-       :func:`csiapps.dash.attach`'s login route. Only ever non-``None`` inside a
-       Flask request context, so it cannot affect a Shiny app.
-    3. The ``CSIAPPS_ACCESS_TOKEN`` environment variable.
-
-    Steps 1 and 2 are mutually exclusive in practice -- no process is both a
-    Shiny session and a Flask request at once -- so the order between them is a
-    formality. Step 3 stays last in both frameworks: it is the single-token
-    development fallback, and a per-user token must always outrank it.
+    Each registered adapter is asked in turn and the first non-empty token wins.
+    Adapters are inert outside their own framework's active context, so their
+    order does not matter in practice -- no process is both a live Shiny session
+    and a Flask request at once. When no adapter yields a token, the
+    ``CSIAPPS_ACCESS_TOKEN`` environment variable is the single-token
+    development fallback; it lives in the core so pure ingestion works with no
+    web framework installed, and a per-user token always outranks it.
     """
-    session = _get_current_session()
-    if session is not None:
-        rv = _token_rv(session)
-        if _in_reactive_context():
-            tok = rv()  # establishes a dependency -> re-run on login
-        else:
-            with reactive.isolate():
-                tok = rv()
+    for adapter in _token_adapters:
+        tok = adapter.read_token()
         if tok:
             return tok
-    tok = _get_flask_token()
-    if tok:
-        return tok
     return os.environ.get("CSIAPPS_ACCESS_TOKEN", "")
 
 
@@ -153,7 +72,7 @@ def token_ready() -> bool:
     """Whether a CSIAPPS access token is available for the current context.
 
     Returns ``True`` once a token is available: inside a Shiny app wrapped by
-    :func:`csiapps.server_wrapper`, the per-session token stored at login;
+    :func:`csiapps.shiny.server_wrapper`, the per-session token stored at login;
     inside a Dash app wrapped by :func:`csiapps.dash.attach`, the per-request
     token from the Flask session; outside both, the ``CSIAPPS_ACCESS_TOKEN``
     environment variable.
@@ -170,16 +89,19 @@ def token_ready() -> bool:
 
 
 def _auth_gate(what: str):
-    """Handle a missing token: gate quietly inside a reactive, else raise.
+    """Handle a missing token: let an adapter gate it, else raise loudly.
 
-    Inside a reactive context a missing token is the normal pre-login state, so
-    cancel the computation with ``req(False)``; because ``current_token`` read
-    the token's reactive value, the computation re-runs once login completes.
-    Outside a reactive context (CLI, scripts) a missing token is a configuration
-    error, so fail loudly.
+    Each registered adapter gets a chance to handle the missing token. The Shiny
+    adapter, inside a reactive context, cancels the computation with
+    ``req(False)`` (it took a dependency on the token in ``read_token``, so it
+    re-runs once login completes). Outside a reactive context, and for Dash
+    (where ``attach``'s guard means a callback never runs unauthenticated), no
+    adapter handles it -- a missing token there is a real configuration error,
+    so the core fails loudly.
     """
-    if _in_reactive_context():
-        req(False)
+    for adapter in _token_adapters:
+        if adapter.handle_missing_token():
+            return
     raise RuntimeError(
         f"{what}: no CSIAPPS_ACCESS_TOKEN set; user not authenticated?"
     )

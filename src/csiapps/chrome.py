@@ -1,6 +1,6 @@
 """Framework-independent CSI chrome: styles, logos, and the copy around them.
 
-Both :mod:`csiapps.app` (Shiny) and :mod:`csiapps.dash` (Dash) render the same
+Both :mod:`csiapps.shiny` (Shiny) and :mod:`csiapps.dash` (Dash) render the same
 navbar, footer, sandbox banner and auth-status line. Only the *tag construction*
 differs between the two frameworks; the CSS, the logo URLs and the wording do
 not. They live here so the two renderers cannot drift, and so that a Dash

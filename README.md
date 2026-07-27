@@ -7,25 +7,35 @@ web applications.
 
 Full feature parity with the R package: the API client (`make_request`,
 `fetch_*`), the local sandbox (schema → ingest → retrieve, plus a dummy
-registration registry), and the Shiny app wrappers (`ui_wrapper`,
-`server_wrapper`). **Sandbox mode is on by default** so nothing hits production
-by accident.
+registration registry), and per-framework app wrappers for Shiny
+([`csiapps.shiny`](#shiny-apps): `ui_wrapper`, `server_wrapper`) and Dash
+([`csiapps.dash`](#dash-apps): `layout_wrapper`, `attach`). **Sandbox mode is on
+by default** so nothing hits production by accident.
 
-Everything except the app wrappers is framework-independent, so the same client,
-sandbox and OAuth2 PKCE helpers back both the Shiny wrappers and the Dash ones
-in [`csiapps.dash`](#dash-apps).
+The core — client, sandbox, and OAuth2 PKCE helpers — is framework-independent
+and depends on neither framework, so `import csiapps` pulls in no web framework
+at all. The two frameworks are symmetric, mutually exclusive optional extras:
+each app installs and imports only the one it uses.
 
 ## Installation
 
 ```bash
-pip install csiapps
+pip install csiapps            # core only: ingestion + sandbox, no web framework
 ```
 
-For a Dash app, install the optional dependencies too:
+For an app, add the extra for your framework:
 
 ```bash
-pip install 'csiapps[dash]'
+pip install 'csiapps[shiny]'   # Shiny app
+pip install 'csiapps[dash]'    # Dash app
 ```
+
+> **Migrating from 0.2.x (breaking):** Shiny is no longer a hard dependency and
+> the wrappers moved off the top-level package. A Shiny app now installs
+> `csiapps[shiny]` and imports `from csiapps.shiny import ui_wrapper,
+> server_wrapper` instead of `from csiapps import ui_wrapper, server_wrapper`.
+> The core API (`make_request`, `fetch_*`, `token_ready`, the sandbox helpers)
+> is unchanged.
 
 ## Quickstart
 
@@ -41,6 +51,32 @@ csiapps.make_request("api/warehouse/ingestion/primary/", method="POST",
 page = csiapps.make_request("api/warehouse/data-records", query={"source_uuid": "demo"})
 print(page["count"])   # 1
 ```
+
+## Shiny apps
+
+Install `csiapps[shiny]` and wrap the UI and server. `ui_wrapper` adds the CSI
+navbar, footer, auth-status line and sandbox banner; `server_wrapper` runs the
+OAuth2 PKCE login (simulated in sandbox mode) and stores the per-session token
+so `fetch_*` helpers resolve it automatically.
+
+```python
+from shiny import App, reactive, ui
+from csiapps.shiny import server_wrapper, ui_wrapper
+import csiapps
+
+app_ui = ui_wrapper(
+    ui.input_select("org", "Organisation", choices={}),
+)
+
+def app_server(input, output, session):
+    @reactive.effect
+    def _load_orgs():             # gates itself until login; no token handling
+        ui.update_select("org", choices=csiapps.fetch_org_options())
+
+app = App(app_ui, server_wrapper(app_server))
+```
+
+See the runnable [`examples/app.py`](examples/app.py).
 
 ## Dash apps
 
@@ -87,10 +123,15 @@ and the runnable [`examples/`](examples/) (`warehouse_ingest.py`, `app.py`,
 Uses [uv](https://docs.astral.sh/uv/).
 
 ```bash
-uv sync                        # install deps + dev tools (incl. the dash extra)
-uv run pytest                  # run tests
+uv sync                        # install deps + dev tools (both framework extras)
+uv run pytest                  # run tests (framework suites skip if their extra is absent)
 uv run ruff check .            # lint
-uv sync --no-group dash-tests && uv run --no-sync pytest   # the no-Dash install
-uv run --group docs mkdocs serve   # preview docs
 uv build                       # build sdist + wheel
+uv run --group docs mkdocs serve   # preview docs
+
+# Prove the isolation locally, matching the CI jobs:
+uv sync --no-group shiny-tests --no-group dash-tests && uv run --no-sync pytest  # core only
+uv sync --no-group dash-tests  && uv run --no-sync pytest                        # Shiny only
+uv sync --no-group shiny-tests && uv run --no-sync pytest                        # Dash only
+uv sync                                                                          # restore both
 ```

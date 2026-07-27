@@ -12,7 +12,7 @@ Framework mapping notes (R Shiny -> Shiny for Python):
 * ``shinyjs::runjs`` has no Python port; the two `window.location` nudges use a
   custom-message handler (``csip_reset``) injected in the head, same mechanism as
   the redirect (``csip_redirect``). ``useShinyjs()`` is dropped.
-* ``session$userData$csiapps_token`` -> :func:`csiapps.client.set_session_token`
+* ``session$userData$csiapps_token`` -> :func:`csiapps.shiny.set_session_token`
   (keyed on the session), read back by :func:`csiapps.client.current_token`.
 * ``session$sendCustomMessage`` is a coroutine here, so effects that send
   messages are ``async``.
@@ -20,11 +20,12 @@ Framework mapping notes (R Shiny -> Shiny for Python):
 
 import asyncio
 import os
+import weakref
 from collections.abc import Callable
 from urllib.parse import parse_qs, urlencode
 
 import httpx
-from shiny import reactive, render, ui
+from shiny import reactive, render, req, ui
 from shiny.types import TagChild
 from shiny.ui import Tag
 
@@ -37,6 +38,87 @@ from . import auth, chrome, client, config
 _FAVICON = chrome.FAVICON
 _seed_token_value = auth.seed_sandbox_token
 _signed_in_text = chrome.signed_in_text
+
+
+# ---- per-session token store + adapter ---------------------------------
+#
+# The access token is stored per Shiny session (keyed on the session object, the
+# faithful analog of R storing it on session$userData) so concurrent users never
+# share a token. server_wrapper writes it here at login; the adapter below is
+# registered with the framework-neutral client so client.current_token() reads
+# it back without importing Shiny.
+#
+# The value is a reactive.value (not a plain string) so that reading it inside a
+# reactive context registers a dependency: an app reactive that calls a fetch_*
+# helper before login completes is cancelled quietly (the adapter's
+# handle_missing_token calls req(False)) and re-runs on its own once the token
+# lands. Lazily created so it does not matter whether the wrapper or the app
+# touches the session first.
+_session_tokens: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
+def _get_current_session():
+    # Indirection so tests can stub the active session without a running app.
+    try:
+        from shiny.session import get_current_session
+
+        return get_current_session()
+    except Exception:
+        return None
+
+
+def _in_reactive_context() -> bool:
+    # True inside a reactive effect/calc/render, where req() has a computation to
+    # cancel and re-run. Outside one (CLI, scripts, plain tests) req() would just
+    # raise, so callers there should fail loudly instead.
+    try:
+        from shiny.reactive._core import get_current_context
+
+        get_current_context()
+        return True
+    except Exception:
+        return False
+
+
+def _token_rv(session) -> "reactive.Value":
+    rv = _session_tokens.get(session)
+    if rv is None:
+        rv = reactive.value(None)
+        _session_tokens[session] = rv
+    return rv
+
+
+def set_session_token(session, token) -> None:
+    """Store (or clear, when ``token`` is falsy) the access token for a session."""
+    _token_rv(session).set(token or None)
+
+
+class _ShinyTokenAdapter:
+    """Reads the per-session Shiny token for :func:`csiapps.client.current_token`."""
+
+    def read_token(self):
+        session = _get_current_session()
+        if session is None:
+            return None
+        rv = _token_rv(session)
+        if _in_reactive_context():
+            tok = rv()  # establishes a dependency -> re-run on login
+        else:
+            with reactive.isolate():
+                tok = rv()
+        return tok or None
+
+    def handle_missing_token(self) -> bool:
+        # Inside a reactive context a missing token is the normal pre-login
+        # state, so cancel the computation with req(False); because read_token
+        # took a dependency on the token's reactive value, it re-runs once login
+        # completes. Outside a reactive context let the core raise loudly.
+        if _in_reactive_context():
+            req(False)
+        return False
+
+
+client.register_token_adapter(_ShinyTokenAdapter())
 
 _HANDLERS_JS = """
 Shiny.addCustomMessageHandler('csip_redirect', function(url) {
@@ -108,7 +190,7 @@ def ui_wrapper(*args: TagChild, sandbox: bool | None = None) -> Tag:
     redirect/reset message handlers, and — in sandbox mode — a banner making it
     obvious the app is not connected to the live warehouse. Use it in place of
     ``ui.page_fluid`` at the top of an app's UI definition; pair it with
-    [`server_wrapper`][csiapps.app.server_wrapper] on the server side.
+    [`server_wrapper`][csiapps.shiny.server_wrapper] on the server side.
 
     Args:
         *args: The app's own UI elements (Shiny tags / components), rendered
@@ -123,9 +205,9 @@ def ui_wrapper(*args: TagChild, sandbox: bool | None = None) -> Tag:
     Example:
         ```python
         from shiny import ui
-        import csiapps
+        from csiapps.shiny import ui_wrapper
 
-        app_ui = csiapps.ui_wrapper(
+        app_ui = ui_wrapper(
             ui.h2("My app"),
             ui.input_action_button("logout", "Log out"),
         )
@@ -135,7 +217,7 @@ def ui_wrapper(*args: TagChild, sandbox: bool | None = None) -> Tag:
         The chrome styles are scoped by id and marked ``!important`` so a wrapped
         app's own theme cannot override the navbar and footer. Include an
         ``input_action_button("logout", ...)`` for the logout effect wired up by
-        [`server_wrapper`][csiapps.app.server_wrapper].
+        [`server_wrapper`][csiapps.shiny.server_wrapper].
     """
     if sandbox is None:
         sandbox = config.is_sandbox_mode()
@@ -193,18 +275,18 @@ def server_wrapper(
     Example:
         ```python
         from shiny import App
-        import csiapps
+        from csiapps.shiny import server_wrapper
 
         def my_server(input, output, session):
             ...
 
-        app = App(app_ui, csiapps.server_wrapper(my_server))
+        app = App(app_ui, server_wrapper(my_server))
         ```
 
     Note:
         The wrapper registers a logout effect bound to an ``input.logout``
         action button — include one in the UI (see
-        [`ui_wrapper`][csiapps.app.ui_wrapper]). Blocking token and ``/me`` calls
+        [`ui_wrapper`][csiapps.shiny.ui_wrapper]). Blocking token and ``/me`` calls
         run off the event loop so a slow endpoint cannot stall other sessions.
     """
     if sandbox is None:
@@ -231,7 +313,7 @@ def server_wrapper(
                     user_token.set(
                         {"error": err, "error_description": qs.get("error_description", [None])[0]}
                     )
-                    client.set_session_token(session, None)
+                    set_session_token(session, None)
                     await session.send_custom_message("csip_reset", {})
 
                 # 1) no code + no token -> redirect to CSI
@@ -269,7 +351,7 @@ def server_wrapper(
         @reactive.event(user_token)
         async def _consume():
             tok = user_token()
-            client.set_session_token(session, None)
+            set_session_token(session, None)
 
             if tok is None or tok.get("error"):
                 await session.send_custom_message("csip_reset", {})
@@ -279,7 +361,7 @@ def server_wrapper(
             if not access_token:
                 return
 
-            client.set_session_token(session, access_token)
+            set_session_token(session, access_token)
 
             userinfo_url = config.userinfo_url()
             if userinfo_url:
@@ -312,7 +394,7 @@ def server_wrapper(
         @reactive.event(input.logout, ignore_none=True)
         async def _logout():
             userinfo.set(None)
-            client.set_session_token(session, None)
+            set_session_token(session, None)
             if sandbox:
                 user_token.set(_seed_token_value())
             else:

@@ -1,6 +1,6 @@
 [project]
 name = "csiapps"
-version = "0.2.0"
+version = "0.3.0"
 description = "Helper functions and utilities for CSI data warehouse ingestion and Shiny or Dash web applications (Python port of the csiapps R package)."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -14,13 +14,16 @@ dependencies = [
     "httpx>=0.27",
     "jsonschema>=4.21",
     "faker>=25",
-    "shiny>=1.0",
 ]
 
 [project.optional-dependencies]
-# Dash framework support (csiapps.dash). `shiny` stays a hard dependency: moving
-# it here is the one change that can break a working deployment. See
-# DASH_PACKAGE_PLAN.md section 2.1.
+# The web frameworks are symmetric, mutually exclusive optional extras: a Shiny
+# app installs `[shiny]`, a Dash app installs `[dash]`, and the core (ingestion,
+# auth, client, sandbox, shared chrome) depends on neither. See
+# DASH_PACKAGE_PLAN.md sections 2.1 and 11.
+shiny = [
+    "shiny>=1.0",
+]
 dash = [
     "dash>=3.0",
     "dash-auth>=2.3",
@@ -36,13 +39,15 @@ dev = [
     "ruff>=0.6",
     "respx>=0.21",  # httpx mocking for client tests (phase 3)
 ]
-# Kept separate from `dev` so CI can install without it and prove the Shiny path
-# is unaffected by an install that has no Dash: `uv sync --no-group dash-tests`.
-# The Dash tests skip themselves when the extra is absent.
+# Each framework's tests are kept in their own group so CI can install one extra
+# and prove the other framework is genuinely absent (e.g. `uv sync --no-group
+# dash-tests`). Both framework test suites skip themselves when their extra is
+# absent, so the core-only install runs the core suite cleanly.
+shiny-tests = ["csiapps[shiny]"]
 dash-tests = ["csiapps[dash]"]
 
 [tool.uv]
-default-groups = ["dev", "dash-tests"]
+default-groups = ["dev", "shiny-tests", "dash-tests"]
 
 [build-system]
 requires = ["hatchling"]

@@ -9,7 +9,9 @@ with no credentials and no network.
 
 import json
 
+import httpx
 import pytest
+import respx
 
 pytest.importorskip("dash", reason="csiapps[dash] not installed")
 pytest.importorskip("dash_auth", reason="csiapps[dash] not installed")
@@ -267,7 +269,7 @@ def test_callback_stores_token_and_user(logged_in):
     with app.server.test_client() as c:
         resp = c.get(f"/csi-auth/redirect?code=abc&state={state}")
         assert resp.status_code == 302
-        assert flask.session[client.FLASK_TOKEN_KEY] == "granted-tok"
+        assert flask.session[csidash.TOKEN_KEY] == "granted-tok"
         assert flask.session[csidash.USER_KEY]["first_name"] == "Ada"
 
 
@@ -309,7 +311,7 @@ def test_callback_survives_a_failed_userinfo(logged_in):
     state = auth.pkce_state_encode("v")
     with app.server.test_client() as c:
         c.get(f"/csi-auth/redirect?code=abc&state={state}")
-        assert flask.session[client.FLASK_TOKEN_KEY] == "granted-tok"
+        assert flask.session[csidash.TOKEN_KEY] == "granted-tok"
         assert csidash.USER_KEY not in flask.session
 
 
@@ -334,7 +336,7 @@ def test_callback_failure_modes_do_not_500(monkeypatch, prod_env, query, label):
         resp = c.get(f"/csi-auth/redirect?{query}")
         assert resp.status_code == 302, label
         assert resp.headers["Location"] == "/", label
-        assert client.FLASK_TOKEN_KEY not in flask.session, label
+        assert csidash.TOKEN_KEY not in flask.session, label
 
 
 def test_logout_clears_the_session(logged_in):
@@ -342,10 +344,10 @@ def test_logout_clears_the_session(logged_in):
     state = auth.pkce_state_encode("v")
     with app.server.test_client() as c:
         c.get(f"/csi-auth/redirect?code=abc&state={state}")
-        assert client.FLASK_TOKEN_KEY in flask.session
+        assert csidash.TOKEN_KEY in flask.session
         resp = c.get("/csi-auth/logout")
         assert resp.status_code == 302
-        assert client.FLASK_TOKEN_KEY not in flask.session
+        assert csidash.TOKEN_KEY not in flask.session
         assert csidash.USER_KEY not in flask.session
 
 
@@ -524,3 +526,88 @@ def test_sandbox_data_flows_end_to_end_through_a_dash_app():
         with app.server.test_request_context("/"):
             profiles = csiapps.fetch_profiles(filters={"sport_org_id": 200})
     assert len(profiles) == 3
+
+
+# ---- the Flask token adapter -------------------------------------------
+#
+# csiapps.dash registers a token adapter on import so client.current_token()
+# reads session["csi_token"] without the core importing Flask. This is the one
+# seam back into the framework-neutral core, so its behaviour (inert outside a
+# request, per-request token outranks the env var, degrades on a bad cookie) is
+# pinned here rather than in the core token test.
+
+SITE = "https://apps.csipacific.ca"
+
+
+@pytest.fixture
+def flask_app():
+    app = flask.Flask(__name__)
+    app.secret_key = "k" * 48
+    return app
+
+
+def test_flask_token_wins_over_env(monkeypatch, flask_app):
+    monkeypatch.setenv("CSIAPPS_ACCESS_TOKEN", "envtok")
+    with flask_app.test_request_context("/"):
+        flask.session[csidash.TOKEN_KEY] = "flasktok"
+        assert client.current_token() == "flasktok"
+
+
+def test_flask_adapter_is_inert_outside_a_request(monkeypatch):
+    # A non-Dash process (or a Dash app between requests) must fall through to the
+    # env var exactly as if no adapter were installed.
+    monkeypatch.setenv("CSIAPPS_ACCESS_TOKEN", "envtok")
+    assert csidash._FlaskTokenAdapter().read_token() is None
+    assert client.current_token() == "envtok"
+
+
+def test_empty_flask_token_falls_through_to_env(monkeypatch, flask_app):
+    # An empty string in the cookie is not a token; it must not mask the env var.
+    monkeypatch.setenv("CSIAPPS_ACCESS_TOKEN", "envtok")
+    with flask_app.test_request_context("/"):
+        flask.session[csidash.TOKEN_KEY] = ""
+        assert client.current_token() == "envtok"
+
+
+def test_no_token_in_a_request_is_empty_string(monkeypatch, flask_app):
+    monkeypatch.delenv("CSIAPPS_ACCESS_TOKEN", raising=False)
+    with flask_app.test_request_context("/"):
+        assert client.current_token() == ""
+        assert client.token_ready() is False
+
+
+def test_unreadable_session_does_not_propagate(monkeypatch):
+    # A tampered or undecryptable cookie must degrade to "no token", not take the
+    # whole request down with a 500.
+    class Boom:
+        def get(self, key):
+            raise RuntimeError("bad session cookie")
+
+    monkeypatch.setattr(csidash, "has_request_context", lambda: True)
+    monkeypatch.setattr(csidash, "session", Boom())
+    monkeypatch.setenv("CSIAPPS_ACCESS_TOKEN", "envtok")
+    assert csidash._FlaskTokenAdapter().read_token() is None
+    assert client.current_token() == "envtok"
+
+
+@respx.mock
+def test_make_request_uses_the_flask_token(monkeypatch, flask_app):
+    monkeypatch.delenv("CSIAPPS_ACCESS_TOKEN", raising=False)
+    route = respx.get(f"{SITE}/api/csiauth/me/").mock(
+        return_value=httpx.Response(200, json={"first_name": "Ada"})
+    )
+    with flask_app.test_request_context("/"):
+        flask.session[csidash.TOKEN_KEY] = "flasktok"
+        out = client.make_request("api/csiauth/me/", sandbox=False)
+    assert out == {"first_name": "Ada"}
+    assert route.calls.last.request.headers["Authorization"] == "Bearer flasktok"
+
+
+def test_missing_token_in_a_request_raises_loudly(monkeypatch, flask_app):
+    # Behind attach()'s guard this is unreachable for a real user, which makes a
+    # missing token here the right signal for a misconfiguration: raise, don't
+    # silently gate (Dash has no reactive to cancel).
+    monkeypatch.delenv("CSIAPPS_ACCESS_TOKEN", raising=False)
+    with flask_app.test_request_context("/"):
+        with pytest.raises(RuntimeError, match="no CSIAPPS_ACCESS_TOKEN set"):
+            client.make_request("api/csiauth/me/", sandbox=False)

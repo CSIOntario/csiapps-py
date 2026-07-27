@@ -2,17 +2,16 @@
 phase 4 once csiapps.sandbox exists.
 
 Ports the production-path assertions of test-sandbox-mode.R (token required when
-sandbox is off) and adds coverage for the fetch_* helpers and pagination.
+sandbox is off) and adds coverage for the fetch_* helpers and pagination. These
+are framework-independent: they import only the core and pass with no web
+framework installed. The Shiny-reactive token path lives in test_shiny.py.
 """
-
-import asyncio
 
 import httpx
 import pytest
 import respx
-from shiny import reactive
 
-from csiapps import client, config
+from csiapps import config
 from csiapps.client import (
     current_token,
     fetch_org_options,
@@ -34,20 +33,6 @@ def test_current_token_env_fallback(monkeypatch):
     assert current_token() == "envtok"
 
 
-def test_current_token_session_wins(monkeypatch):
-    monkeypatch.setenv("CSIAPPS_ACCESS_TOKEN", "envtok")
-
-    class FakeSession:  # weak-referenceable stand-in for a Shiny session
-        pass
-
-    sess = FakeSession()
-    monkeypatch.setattr(client, "_get_current_session", lambda: sess)
-    client.set_session_token(sess, "sesstok")
-    assert current_token() == "sesstok"
-    client.set_session_token(sess, None)
-    assert current_token() == "envtok"
-
-
 def test_token_ready_env_fallback(monkeypatch):
     monkeypatch.delenv("CSIAPPS_ACCESS_TOKEN", raising=False)
     assert token_ready() is False
@@ -56,52 +41,11 @@ def test_token_ready_env_fallback(monkeypatch):
 
 
 def test_production_requires_token(monkeypatch):
-    # sandbox off + no token, outside any reactive context -> raise loudly (the R
+    # sandbox off + no token, no framework adapter active -> raise loudly (the R
     # "production path still requires a token" case, and the CLI/script path).
     monkeypatch.delenv("CSIAPPS_ACCESS_TOKEN", raising=False)
     with pytest.raises(RuntimeError, match="no CSIAPPS_ACCESS_TOKEN set"):
         make_request("api/csiauth/me/", sandbox=False)
-
-
-def test_gates_quietly_and_refires_on_login(monkeypatch):
-    # Inside a reactive context a not-yet-available token must not raise: the
-    # helper cancels quietly via req(), and the reactive re-runs on its own once
-    # server_wrapper stores the token (the fix for the empty-dropdown race).
-    monkeypatch.delenv("CSIAPPS_ACCESS_TOKEN", raising=False)
-
-    class FakeSession:  # weak-referenceable stand-in for a Shiny session
-        pass
-
-    sess = FakeSession()
-    monkeypatch.setattr(client, "_get_current_session", lambda: sess)
-    client.set_session_token(sess, None)
-
-    state = {"runs": 0, "reached_api": 0}
-
-    @reactive.effect
-    def _consumer():
-        state["runs"] += 1
-        # A gated helper called before login: raises no error, cancels quietly.
-        fetch_org_options(sandbox=False)
-        state["reached_api"] += 1
-
-    async def drive():
-        await reactive.flush()
-        assert state["runs"] == 1
-        assert state["reached_api"] == 0  # gated pre-login, no error surfaced
-
-        client.set_session_token(sess, "tok-abc")
-        await reactive.flush()
-        assert state["runs"] == 2  # re-fired on its own once the token arrived
-        assert state["reached_api"] == 1  # got past the gate and completed the call
-
-    with respx.mock:
-        respx.get(f"{SITE}{config.SPORT_ORG_ENDPOINT}").mock(
-            return_value=httpx.Response(200, json={"results": []})
-        )
-        asyncio.run(drive())
-
-    _consumer.destroy()
 
 
 # ---- make_request HTTP path ----

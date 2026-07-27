@@ -11,7 +11,7 @@ from datetime import date
 
 import pytest
 
-from csiapps import chrome, set_institute, ui_wrapper
+from csiapps import chrome, set_institute
 
 # ---- the module itself -------------------------------------------------
 
@@ -82,13 +82,17 @@ def test_chrome_module_imports_no_web_framework():
 
 # ---- cross-framework parity --------------------------------------------
 
-# Skip on the third-party modules, not on csiapps.dash: that module raises a
-# guided ImportError whose name is "dash", and pytest 8's importorskip re-raises
-# anything that is not a ModuleNotFoundError for the module it was asked about.
+# Parity needs both frameworks rendering at once, so skip unless both extras are
+# present. Skip on the third-party modules, not on csiapps.shiny/csiapps.dash:
+# csiapps.dash raises a guided ImportError whose name is "dash", and pytest 8's
+# importorskip re-raises anything that is not a ModuleNotFoundError for the
+# module it was asked about.
+pytest.importorskip("shiny", reason="csiapps[shiny] not installed")
 pytest.importorskip("dash", reason="csiapps[dash] not installed")
 pytest.importorskip("dash_auth", reason="csiapps[dash] not installed")
 
 from csiapps import dash as csidash  # noqa: E402
+from csiapps.shiny import ui_wrapper  # noqa: E402
 
 
 def render_dash(**kwargs):
@@ -125,7 +129,7 @@ def test_both_frameworks_show_the_same_unauthenticated_copy(monkeypatch):
     monkeypatch.delenv("CSIAPPS_ACCESS_TOKEN", raising=False)
     # Shiny renders this from the reactive auth_status; the string is what is
     # pinned here, since that is what can drift.
-    import csiapps.app as shiny_app
+    import csiapps.shiny as shiny_app
 
     assert chrome.UNAUTHENTICATED_TEXT in str(shiny_app.chrome.UNAUTHENTICATED_TEXT)
     assert chrome.UNAUTHENTICATED_TEXT in render_dash(sandbox=True)
