@@ -12,6 +12,8 @@ _ENV_VARS = (
     "CSIAPPS_CLIENT_ID",
     "CSIAPPS_CLIENT_SECRET",
     "CSIAPPS_SCOPE",
+    "CSIAPPS_SECRET_KEY",  # Dash session-cookie key (csiapps.dash.attach)
+    "WEB_CONCURRENCY",     # read by attach()'s multi-worker sandbox warning
 )
 
 

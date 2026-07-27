@@ -1,7 +1,7 @@
 [project]
 name = "csiapps"
-version = "0.1.4"
-description = "Helper functions and utilities for CSI data warehouse ingestion and Shiny web applications (Python port of the csiapps R package)."
+version = "0.2.0"
+description = "Helper functions and utilities for CSI data warehouse ingestion and Shiny or Dash web applications (Python port of the csiapps R package)."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
@@ -9,12 +9,21 @@ authors = [
     { name = "David Awosoga", email = "dawosoga@csiontario.ca" },
     { name = "Kyu Min Shim", email = "kmshim@uwaterloo.ca" },
 ]
-keywords = ["csi", "warehouse", "shiny", "oauth2", "csiontario"]
+keywords = ["csi", "warehouse", "shiny", "dash", "oauth2", "csiontario"]
 dependencies = [
     "httpx>=0.27",
     "jsonschema>=4.21",
     "faker>=25",
     "shiny>=1.0",
+]
+
+[project.optional-dependencies]
+# Dash framework support (csiapps.dash). `shiny` stays a hard dependency: moving
+# it here is the one change that can break a working deployment. See
+# DASH_PACKAGE_PLAN.md section 2.1.
+dash = [
+    "dash>=3.0",
+    "dash-auth>=2.3",
 ]
 
 [project.urls]
@@ -27,6 +36,13 @@ dev = [
     "ruff>=0.6",
     "respx>=0.21",  # httpx mocking for client tests (phase 3)
 ]
+# Kept separate from `dev` so CI can install without it and prove the Shiny path
+# is unaffected by an install that has no Dash: `uv sync --no-group dash-tests`.
+# The Dash tests skip themselves when the extra is absent.
+dash-tests = ["csiapps[dash]"]
+
+[tool.uv]
+default-groups = ["dev", "dash-tests"]
 
 [build-system]
 requires = ["hatchling"]

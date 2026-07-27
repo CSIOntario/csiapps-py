@@ -37,6 +37,18 @@ _session_tokens: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 # Transient statuses worth retrying (httr2 req_retry retried on these).
 _RETRY_STATUSES = {429, 500, 502, 503, 504}
 
+# Flask session key holding the access token. csiapps.dash writes it; this
+# module reads it. Named here so there is one definition of the key.
+FLASK_TOKEN_KEY = "csi_token"
+
+# Resolved on first use: the Flask session accessors, or False when Flask is not
+# installed. Cached deliberately -- a *failed* import is not recorded in
+# sys.modules, so Python re-walks sys.path on every attempt (~38us here, 20x the
+# cost of a cached import). current_token() runs on every fetch_* call and every
+# token_ready(), including inside Shiny reactives that re-fire often, so a
+# Shiny-only install must not pay that probe more than once.
+_flask_accessors = None
+
 
 def _get_current_session():
     # Indirection so tests can stub the active session without a running app.
@@ -45,6 +57,35 @@ def _get_current_session():
 
         return get_current_session()
     except Exception:
+        return None
+
+
+def _get_flask_token():
+    """The Flask half of token resolution: ``session["csi_token"]``, or ``None``.
+
+    Same lazy-import indirection as :func:`_get_current_session`, so there is no
+    import-time Flask dependency. Returns ``None`` both when Flask is absent and
+    when there is no active request context, which is what keeps the Shiny path
+    and the ``CSIAPPS_ACCESS_TOKEN`` fallback exactly as they were.
+    """
+    global _flask_accessors
+    if _flask_accessors is None:
+        try:
+            from flask import has_request_context, session
+
+            # `session` is a context-local proxy: safe to hold, resolves per
+            # request on attribute access.
+            _flask_accessors = (has_request_context, session)
+        except ImportError:
+            _flask_accessors = False
+    if _flask_accessors is False:
+        return None
+    has_request_context, session = _flask_accessors
+    try:
+        return session.get(FLASK_TOKEN_KEY) if has_request_context() else None
+    except Exception:
+        # An unreadable/tampered session cookie must not take the app down; fall
+        # through to the env var and then to the normal unauthenticated gate.
         return None
 
 
@@ -77,10 +118,20 @@ def set_session_token(session, token) -> None:
 def current_token() -> str:
     """Resolve the access token: per-session first, then ``CSIAPPS_ACCESS_TOKEN``.
 
-    Inside a Shiny session the token is read from the session's reactive value --
-    reactively when a reactive context is active (so the caller re-runs when the
-    token changes), and via ``reactive.isolate`` otherwise. Outside a session it
-    falls back to the ``CSIAPPS_ACCESS_TOKEN`` environment variable.
+    Resolution order, first hit wins:
+
+    1. **Shiny session.** The token is read from the session's reactive value --
+       reactively when a reactive context is active (so the caller re-runs when
+       the token changes), and via ``reactive.isolate`` otherwise.
+    2. **Flask session** (``session["csi_token"]``), set by
+       :func:`csiapps.dash.attach`'s login route. Only ever non-``None`` inside a
+       Flask request context, so it cannot affect a Shiny app.
+    3. The ``CSIAPPS_ACCESS_TOKEN`` environment variable.
+
+    Steps 1 and 2 are mutually exclusive in practice -- no process is both a
+    Shiny session and a Flask request at once -- so the order between them is a
+    formality. Step 3 stays last in both frameworks: it is the single-token
+    development fallback, and a per-user token must always outrank it.
     """
     session = _get_current_session()
     if session is not None:
@@ -92,6 +143,9 @@ def current_token() -> str:
                 tok = rv()
         if tok:
             return tok
+    tok = _get_flask_token()
+    if tok:
+        return tok
     return os.environ.get("CSIAPPS_ACCESS_TOKEN", "")
 
 
@@ -100,7 +154,9 @@ def token_ready() -> bool:
 
     Returns ``True`` once a token is available: inside a Shiny app wrapped by
     :func:`csiapps.server_wrapper`, the per-session token stored at login;
-    outside Shiny, the ``CSIAPPS_ACCESS_TOKEN`` environment variable.
+    inside a Dash app wrapped by :func:`csiapps.dash.attach`, the per-request
+    token from the Flask session; outside both, the ``CSIAPPS_ACCESS_TOKEN``
+    environment variable.
 
     The check is reactive-friendly: called from a reactive context it takes a
     dependency on the session's token, so a guard like ``req(token_ready())``
