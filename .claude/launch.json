@@ -8,6 +8,12 @@
       "port": 8123
     },
     {
+      "name": "example-dash-app",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "python", "examples/dash_app.py"],
+      "port": 8050
+    },
+    {
       "name": "docs",
       "runtimeExecutable": "uv",
       "runtimeArgs": ["run", "--group", "docs", "mkdocs", "serve", "-a", "localhost:8000"],

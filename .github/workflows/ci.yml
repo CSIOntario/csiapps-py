@@ -23,3 +23,42 @@ jobs:
         run: uv run ruff check .
       - name: Test
         run: uv run pytest
+
+  # An install without the `dash` extra -- i.e. every csiapps deployment that
+  # exists today. Adding Dash support has to be invisible here: the existing
+  # suite passes unchanged, and importing csiapps.dash raises a guided
+  # ImportError rather than a bare ModuleNotFoundError from a submodule.
+  test-without-dash-extra:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+      # Every `uv run` below needs --no-sync: without it uv re-syncs to
+      # [tool.uv] default-groups and quietly puts Dash back, which would make
+      # this whole job a no-op.
+      - name: Install deps without the dash extra
+        run: uv sync --no-group dash-tests
+      - name: Assert Dash and Flask are genuinely absent
+        run: |
+          uv run --no-sync python -c "
+          import importlib.util as u
+          for mod in ('dash', 'dash_auth', 'flask'):
+              assert u.find_spec(mod) is None, mod + ' unexpectedly installed'
+          print('confirmed: no dash, no flask')
+          "
+      - name: Assert csiapps imports and csiapps.dash fails helpfully
+        run: |
+          uv run --no-sync python -c "
+          import csiapps
+          assert csiapps.ui_wrapper is not None
+          try:
+              import csiapps.dash
+          except ImportError as e:
+              assert \"pip install 'csiapps[dash]'\" in str(e), str(e)
+              print('guided ImportError:', e)
+          else:
+              raise SystemExit('expected ImportError but import succeeded')
+          "
+      - name: Test
+        run: uv run --no-sync pytest
