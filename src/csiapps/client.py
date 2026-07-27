@@ -138,7 +138,8 @@ def _perform(method, url, *, params=None, json=None, headers=None, timeout=20, m
     resp = None
     for attempt in range(max_tries):
         resp = httpx.request(
-            method, url, params=params, json=json, headers=headers, timeout=timeout
+            method, url, params=params, json=json, headers=headers, timeout=timeout,
+            follow_redirects=True,
         )
         if resp.status_code not in _RETRY_STATUSES or attempt == max_tries - 1:
             return resp
@@ -524,8 +525,10 @@ def fetch_profile(
         _auth_gate("fetch_profile")
 
     # URL-encode the id so an unusual value can't alter the request path.
+    # Keep the trailing slash: the DRF detail route is `.../profile/<id>/`, and
+    # a slash-less URL 301-redirects (empty body) on APPEND_SLASH backends.
     enc_id = quote(str(profile_id), safe="")
-    url = config.site_url().rstrip("/") + config.PROFILE_ENDPOINT + enc_id
+    url = config.site_url().rstrip("/") + config.PROFILE_ENDPOINT + enc_id + "/"
     resp = _perform(
         "GET", url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"}
     )
