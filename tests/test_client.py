@@ -164,7 +164,9 @@ def test_fetch_profiles_stops_on_cycled_next():
 
 @respx.mock
 def test_fetch_profile_returns_json_and_encodes_id():
-    respx.get(f"{SITE}{config.PROFILE_ENDPOINT}12%2F3").mock(
+    # fetch_profile appends a trailing slash to the detail route (DRF APPEND_SLASH),
+    # so the mock must include it or respx reports the request as unmocked.
+    respx.get(f"{SITE}{config.PROFILE_ENDPOINT}12%2F3/").mock(
         return_value=httpx.Response(200, json={"id": "12/3"})
     )
     out = fetch_profile("12/3", token="tok", sandbox=False)
