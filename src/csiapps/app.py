@@ -28,9 +28,15 @@ from shiny import reactive, render, ui
 from shiny.types import TagChild
 from shiny.ui import Tag
 
-from . import auth, client, config
+from . import auth, chrome, client, config
 
-_FAVICON = "https://csiontario.ca/wp-content/uploads/2022/04/cropped-CSIO-Favicon-192x192.png"
+# The chrome constants and copy live in csiapps.chrome (framework-independent)
+# so csiapps.dash renders the identical navbar/footer without importing Shiny.
+# Re-bound here under their original private names: nothing outside this module
+# should have to care where they moved.
+_FAVICON = chrome.FAVICON
+_seed_token_value = auth.seed_sandbox_token
+_signed_in_text = chrome.signed_in_text
 
 _HANDLERS_JS = """
 Shiny.addCustomMessageHandler('csip_redirect', function(url) {
@@ -46,56 +52,22 @@ Shiny.addCustomMessageHandler('csip_reset', function(x) {
 
 
 def _csi_chrome_styles():
-    # Neutral frame: white bar, CSI-red accent line, soft shadow. Scoped by id +
-    # !important so a wrapped app's theme/CSS cannot override it.
-    accent = "#d81f26"
-    bar_bg = "#ffffff"
-    bar_text = "#1f2937"
-    css = f"""
-    #csi-navbar {{
-      background-color: {bar_bg} !important;
-      border-bottom: 3px solid {accent} !important;
-      box-shadow: 0 2px 4px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
-      position: sticky;
-      top: 0;
-      z-index: 1030;
-    }}
-    #csi-navbar .navbar-brand,
-    #csi-navbar .navbar-brand:hover,
-    #csi-navbar .navbar-nav .nav-link {{
-      color: {bar_text} !important;
-    }}
-    /* Pin the logo size. The height is set as an HTML attribute (low priority),
-       so a wrapped app's own `img {{}}` rule (e.g. `height:auto`/`max-width:100%`
-       from a theme or Bootstrap) would otherwise resize the logo and push it
-       through the red accent line. */
-    #csi-navbar .navbar-brand img {{
-      height: 48px !important;
-      width: auto !important;
-      max-width: none !important;
-    }}
-    #footer {{
-      background-color: {bar_bg} !important;
-      color: {bar_text} !important;
-      border-top: 1px solid #e6e6e6 !important;
-      z-index: 1030;
-    }}
-    #footer p, #footer a {{ color: {bar_text} !important; }}
-    """
-    return ui.tags.style(ui.HTML(css))
+    return ui.tags.style(ui.HTML(chrome.CHROME_CSS))
 
 
 def _logo_src():
-    if config.get_institute() == "csipacific":
-        return "https://www.csipacific.ca/wp-content/uploads/2024/05/csi-pacific-logo-main.png"
-    return "https://csiontario.ca/wp-content/uploads/2022/03/logo-csi-ontario.png"
+    return chrome.logo_src()
 
 
 def _navbar_ui():
     return ui.tags.nav(
         ui.tags.div(
             ui.tags.a(
-                ui.tags.img(src=_logo_src(), height="48px", style="margin-right: 8px;"),
+                ui.tags.img(
+                    src=chrome.logo_src(),
+                    height=chrome.LOGO_HEIGHT,
+                    style="margin-right: 8px;",
+                ),
                 class_="navbar-brand d-flex align-items-center",
                 href="#",
             ),
@@ -107,13 +79,10 @@ def _navbar_ui():
 
 
 def _footer_ui():
-    from datetime import date
-
-    name = "CSI Pacific" if config.get_institute() == "csipacific" else "CSI Ontario"
     return ui.tags.footer(
         ui.tags.div(
             ui.tags.p(
-                ui.HTML(f"&copy; {date.today().year} {name}"),
+                ui.HTML(chrome.footer_text()),
                 class_="col-md-4 mb-0",
             ),
             ui.tags.ul(class_="nav col-md-4 justify-content-end"),
@@ -126,9 +95,9 @@ def _footer_ui():
 
 def _sandbox_banner():
     return ui.tags.div(
-        ui.HTML("Sandbox mode &mdash; not connected to the live warehouse"),
-        class_="text-center border-bottom",
-        style="background:#faf6ec;color:#8a6d3b;font-size:12px;padding:3px 0;letter-spacing:.02em;",
+        ui.HTML(chrome.SANDBOX_BANNER_TEXT),
+        class_=chrome.SANDBOX_BANNER_CLASS,
+        style=chrome.SANDBOX_BANNER_STYLE,
     )
 
 
@@ -195,30 +164,6 @@ def ui_wrapper(*args: TagChild, sandbox: bool | None = None) -> Tag:
 
 
 # ---- server ------------------------------------------------------------
-
-
-def _seed_token_value():
-    """The token value the sandbox seeds the session with (pure, so it is testable).
-
-    Mirrors R's .sandbox_seed_session(): the developer's existing access token is
-    adopted as the "granted" token; with none set, a sentinel marks the session
-    unauthenticated (the shared consumer then short-circuits before any network
-    call).
-    """
-    tok = os.environ.get("CSIAPPS_ACCESS_TOKEN", "")
-    if tok:
-        return {"access_token": tok, "sandbox": True}
-    return {"sandbox": True, "unauthenticated": True}
-
-
-def _signed_in_text(userinfo, sandbox):
-    if userinfo and userinfo.get("first_name") and userinfo.get("last_name"):
-        text = f"Signed in as {userinfo['first_name']} {userinfo['last_name']}"
-    else:
-        text = "Signed in"
-    if sandbox:
-        text += " (sandbox)"
-    return text
 
 
 def server_wrapper(
@@ -360,12 +305,7 @@ def server_wrapper(
             if tok.get("error"):
                 return ui.tags.p("Authentication error (see logs).")
             if tok.get("unauthenticated"):
-                return ui.tags.p(
-                    ui.HTML(
-                        "Not authenticated &mdash; set CSIAPPS_ACCESS_TOKEN "
-                        "to emulate login in sandbox mode."
-                    )
-                )
+                return ui.tags.p(ui.HTML(chrome.UNAUTHENTICATED_TEXT))
             return ui.TagList(ui.tags.br(), ui.tags.p(_signed_in_text(userinfo(), sandbox)))
 
         @reactive.effect

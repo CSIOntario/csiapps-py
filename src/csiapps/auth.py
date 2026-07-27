@@ -98,6 +98,23 @@ def exchange_code_for_token(code: str, code_verifier: str | None = None) -> dict
     }
 
 
+def seed_sandbox_token() -> dict:
+    """The token value a sandbox session is seeded with.
+
+    Mirrors R's ``.sandbox_seed_session()``: the developer's existing access
+    token is adopted as the "granted" token, so sandbox mode can emulate a real
+    login and load ``/me``. With none set, a sentinel marks the session
+    unauthenticated and the consumer short-circuits before any network call.
+
+    Framework-independent on purpose — both the Shiny wrapper and the Dash
+    wrapper need exactly one definition of what a simulated login looks like.
+    """
+    tok = os.environ.get("CSIAPPS_ACCESS_TOKEN", "")
+    if tok:
+        return {"access_token": tok, "sandbox": True}
+    return {"sandbox": True, "unauthenticated": True}
+
+
 # ---- Secret / env checks ----
 
 
