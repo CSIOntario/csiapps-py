@@ -49,10 +49,15 @@ except ImportError as exc:  # pragma: no cover - exercised by the no-extra CI jo
         f"(missing: {exc.name})"
     ) from exc
 
-# All csiapps-owned routes live under this prefix: it is the one path the auth
-# guard lets through unauthenticated, so the login callback can complete.
+# csiapps-owned routes. Logout and the chrome CSS live under a private prefix so
+# they can't collide with an app's own routes. The OAuth redirect deliberately
+# uses the bare /redirect that the existing CSI Dash apps already register with
+# the provider (it is dash-auth-external's default), so an app migrating onto
+# csiapps.dash keeps its registered redirect URI unchanged. Both /redirect and
+# anything under the prefix are let through the guard unauthenticated (see
+# _CsiAuth.is_authorized) — that is how the login callback acquires a token.
 AUTH_PREFIX = "/csi-auth"
-REDIRECT_ROUTE = f"{AUTH_PREFIX}/redirect"
+REDIRECT_ROUTE = "/redirect"
 LOGOUT_ROUTE = f"{AUTH_PREFIX}/logout"
 CSS_ROUTE = f"{AUTH_PREFIX}/chrome.css"
 
@@ -192,8 +197,8 @@ class _CsiAuth(_DashAuth):
 
     def is_authorized(self):
         # Own routes are always reachable: the redirect route is how a session
-        # acquires a token in the first place.
-        if request.path.startswith(AUTH_PREFIX + "/"):
+        # acquires a token in the first place, and it sits outside AUTH_PREFIX.
+        if request.path == REDIRECT_ROUTE or request.path.startswith(AUTH_PREFIX + "/"):
             return True
         return bool(session.get(TOKEN_KEY))
 
@@ -286,7 +291,8 @@ def attach(app, public_routes=None, sandbox=None):
         app: The ``dash.Dash`` application to protect.
         public_routes: Flask-syntax routes reachable without logging in, e.g.
             ``["/health", "/docs/<page>"]``. ``None`` (the default) protects
-            everything. csiapps' own ``/csi-auth/*`` routes are always public.
+            everything. csiapps' own ``/redirect`` callback and ``/csi-auth/*``
+            routes are always public.
         sandbox: Force sandbox (``True``) or production (``False``) behaviour.
             ``None`` (the default) resolves via
             [`is_sandbox_mode`][csiapps.config.is_sandbox_mode].

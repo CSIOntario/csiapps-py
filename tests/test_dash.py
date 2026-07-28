@@ -33,7 +33,7 @@ GOOD_KEY = "k" * 48
 def prod_env(monkeypatch):
     monkeypatch.setenv("CSIAPPS_SECRET_KEY", GOOD_KEY)
     monkeypatch.setenv("CSIAPPS_CLIENT_ID", "test-client")
-    monkeypatch.setenv("CSIAPPS_REDIRECT_URI", "https://app.example.ca/csi-auth/redirect")
+    monkeypatch.setenv("CSIAPPS_REDIRECT_URI", "https://app.example.ca/redirect")
 
 
 def make_app(sandbox=None, public_routes=None, layout=True, **layout_kwargs):
@@ -105,7 +105,7 @@ def test_login_redirect_carries_pkce_and_client_config(prod_env):
     params = parse_qs(urlparse(resp.headers["Location"]).query)
     assert params["response_type"] == ["code"]
     assert params["client_id"] == ["test-client"]
-    assert params["redirect_uri"] == ["https://app.example.ca/csi-auth/redirect"]
+    assert params["redirect_uri"] == ["https://app.example.ca/redirect"]
     assert params["code_challenge_method"] == ["S256"]
     assert params["code_challenge"]  # present and non-empty
     assert params["scope"] == ["read write"]
@@ -267,7 +267,7 @@ def test_callback_stores_token_and_user(logged_in):
     app = logged_in()
     state = auth.pkce_state_encode("verifier-123")
     with app.server.test_client() as c:
-        resp = c.get(f"/csi-auth/redirect?code=abc&state={state}")
+        resp = c.get(f"/redirect?code=abc&state={state}")
         assert resp.status_code == 302
         assert flask.session[csidash.TOKEN_KEY] == "granted-tok"
         assert flask.session[csidash.USER_KEY]["first_name"] == "Ada"
@@ -284,7 +284,7 @@ def test_callback_passes_the_verifier_to_the_exchange(monkeypatch, prod_env):
     monkeypatch.setattr(csidash, "_load_userinfo", lambda tok: None)
     app = make_app(sandbox=False)
     state = auth.pkce_state_encode("verifier-xyz")
-    app.server.test_client().get(f"/csi-auth/redirect?code=thecode&state={state}")
+    app.server.test_client().get(f"/redirect?code=thecode&state={state}")
     assert seen == {"code": "thecode", "verifier": "verifier-xyz"}
 
 
@@ -293,14 +293,14 @@ def test_callback_returns_the_user_to_their_original_page(logged_in):
     with app.server.test_client() as c:
         c.get("/reports?year=2026")  # guard stores csi_next
         state = auth.pkce_state_encode("v")
-        resp = c.get(f"/csi-auth/redirect?code=abc&state={state}")
+        resp = c.get(f"/redirect?code=abc&state={state}")
         assert resp.headers["Location"].startswith("/reports")
 
 
 def test_callback_defaults_to_root_without_a_stored_next(logged_in):
     app = logged_in()
     state = auth.pkce_state_encode("v")
-    resp = app.server.test_client().get(f"/csi-auth/redirect?code=abc&state={state}")
+    resp = app.server.test_client().get(f"/redirect?code=abc&state={state}")
     assert resp.headers["Location"] == "/"
 
 
@@ -310,7 +310,7 @@ def test_callback_survives_a_failed_userinfo(logged_in):
     app = logged_in(userinfo=None)
     state = auth.pkce_state_encode("v")
     with app.server.test_client() as c:
-        c.get(f"/csi-auth/redirect?code=abc&state={state}")
+        c.get(f"/redirect?code=abc&state={state}")
         assert flask.session[csidash.TOKEN_KEY] == "granted-tok"
         assert csidash.USER_KEY not in flask.session
 
@@ -333,7 +333,7 @@ def test_callback_failure_modes_do_not_500(monkeypatch, prod_env, query, label):
     monkeypatch.setattr(csidash, "_load_userinfo", lambda tok: None)
     app = make_app(sandbox=False)
     with app.server.test_client() as c:
-        resp = c.get(f"/csi-auth/redirect?{query}")
+        resp = c.get(f"/redirect?{query}")
         assert resp.status_code == 302, label
         assert resp.headers["Location"] == "/", label
         assert csidash.TOKEN_KEY not in flask.session, label
@@ -343,7 +343,7 @@ def test_logout_clears_the_session(logged_in):
     app = logged_in()
     state = auth.pkce_state_encode("v")
     with app.server.test_client() as c:
-        c.get(f"/csi-auth/redirect?code=abc&state={state}")
+        c.get(f"/redirect?code=abc&state={state}")
         assert csidash.TOKEN_KEY in flask.session
         resp = c.get("/csi-auth/logout")
         assert resp.status_code == 302
@@ -355,7 +355,7 @@ def test_authenticated_user_reaches_the_app(logged_in):
     app = logged_in()
     state = auth.pkce_state_encode("v")
     with app.server.test_client() as c:
-        c.get(f"/csi-auth/redirect?code=abc&state={state}")
+        c.get(f"/redirect?code=abc&state={state}")
         assert c.get("/").status_code == 200  # guard now lets them through
 
 
@@ -363,7 +363,7 @@ def test_logout_then_guard_bounces_again(logged_in):
     app = logged_in()
     state = auth.pkce_state_encode("v")
     with app.server.test_client() as c:
-        c.get(f"/csi-auth/redirect?code=abc&state={state}")
+        c.get(f"/redirect?code=abc&state={state}")
         c.get("/csi-auth/logout")
         assert c.get("/").status_code == 302
 
@@ -482,7 +482,7 @@ def test_auth_status_names_the_user_from_the_session(logged_in):
     app = logged_in()
     state = auth.pkce_state_encode("v")
     with app.server.test_client() as c:
-        c.get(f"/csi-auth/redirect?code=abc&state={state}")
+        c.get(f"/redirect?code=abc&state={state}")
         # Inside the request context the layout sees the stored /me payload.
         assert "Signed in as Ada Lovelace" in str(csidash.layout_wrapper(sandbox=False)())
 
