@@ -31,13 +31,15 @@ PKCE helpers — is framework-independent and used unchanged.
 
 import os
 import warnings
+from collections.abc import Callable
 from urllib.parse import urlencode
 
 from . import auth, chrome, client, config
 
 try:
     import httpx
-    from dash import html
+    from dash import Dash, html
+    from dash.development.base_component import Component
     from dash_auth.auth import Auth as _DashAuth
     from flask import Response, has_request_context, redirect, request, session
     from werkzeug.middleware.proxy_fix import ProxyFix
@@ -277,8 +279,8 @@ def _register_auth_routes(server):
         return redirect("/")
 
 
-def attach(app: "Dash", public_routes: list[str] | None = None,
-           sandbox: bool | None = None) -> "Dash":
+def attach(app: Dash, public_routes: list[str] | None = None,
+           sandbox: bool | None = None) -> Dash:
     """Install CSIAPPS authentication and chrome support on a Dash app.
 
     Call this once, immediately after constructing the app and before assigning
@@ -438,8 +440,8 @@ def _auth_status(sandbox):
     return html.P(chrome.signed_in_text(_current_user(), sandbox))
 
 
-def layout_wrapper(*children: "Component", nav_links: list[dict] | None = None,
-                   sandbox: bool | None = None) -> "Callable":
+def layout_wrapper(*children: Component, nav_links: list[dict] | None = None,
+                   sandbox: bool | None = None) -> Callable:
     """Wrap an app's layout in the standard CSI chrome.
 
     The Dash counterpart of [`ui_wrapper`][csiapps.shiny.ui_wrapper]: same navbar,
