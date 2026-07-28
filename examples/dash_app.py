@@ -10,7 +10,7 @@ To run it against production instead:
 
     export CSIAPPS_ENV=production
     export CSIAPPS_CLIENT_ID=...  CSIAPPS_CLIENT_SECRET=...
-    export CSIAPPS_REDIRECT_URI=https://your-app/csi-auth/redirect
+    export CSIAPPS_REDIRECT_URI=https://your-app/redirect
     export CSIAPPS_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
 
 Nothing else changes: no dcc.Interval login bounce, no dcc.Location, no manual

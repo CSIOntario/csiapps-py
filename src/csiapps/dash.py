@@ -277,7 +277,8 @@ def _register_auth_routes(server):
         return redirect("/")
 
 
-def attach(app, public_routes=None, sandbox=None):
+def attach(app: "Dash", public_routes: list[str] | None = None,
+           sandbox: bool | None = None) -> "Dash":
     """Install CSIAPPS authentication and chrome support on a Dash app.
 
     Call this once, immediately after constructing the app and before assigning
@@ -437,7 +438,8 @@ def _auth_status(sandbox):
     return html.P(chrome.signed_in_text(_current_user(), sandbox))
 
 
-def layout_wrapper(*children, nav_links=None, sandbox=None):
+def layout_wrapper(*children: "Component", nav_links: list[dict] | None = None,
+                   sandbox: bool | None = None) -> "Callable":
     """Wrap an app's layout in the standard CSI chrome.
 
     The Dash counterpart of [`ui_wrapper`][csiapps.shiny.ui_wrapper]: same navbar,
