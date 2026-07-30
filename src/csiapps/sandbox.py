@@ -7,7 +7,8 @@ plus a dummy sport-org/athlete registry for the ``fetch_*`` helpers.
 Two dependency swaps from the R package:
 
 * schema validation uses ``jsonschema`` (Draft 7) where R used Ajv via
-  ``jsonvalidate``. Validator wording differs on edge cases (see PORTING_PLAN).
+  ``jsonvalidate``. Validator wording differs on edge cases; see the parity
+  checklist at https://csiontario.github.io/csiapps/parity/.
 * random athlete names use ``faker`` where R used the ``babynames`` dataset.
 
 State lives for the process; :func:`clear_sandbox` resets it (test teardown).

@@ -20,7 +20,7 @@ dependencies = [
 # The web frameworks are symmetric, mutually exclusive optional extras: a Shiny
 # app installs `[shiny]`, a Dash app installs `[dash]`, and the core (ingestion,
 # auth, client, sandbox, shared chrome) depends on neither. See
-# DASH_PACKAGE_PLAN.md sections 2.1 and 11.
+# https://csiontario.github.io/csiapps/migrating/.
 shiny = [
     "shiny>=1.0",
 ]

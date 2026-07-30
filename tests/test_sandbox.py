@@ -3,7 +3,7 @@ retrieve, clear, error routes) plus the make_request routing cases from
 test-sandbox-mode.R.
 
 Validator wording is adapted from Ajv to jsonschema (Draft 7): minLength reads
-"too short" rather than "fewer than 10 characters" (see PORTING_PLAN parity note).
+"too short" rather than "fewer than 10 characters".
 """
 
 import json
