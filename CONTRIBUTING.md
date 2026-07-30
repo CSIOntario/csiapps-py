@@ -8,8 +8,9 @@ Thanks for improving `csiapps`. A few pointers:
   [Dash](https://csiontario.github.io/csiapps/dash-apps/) apps, the sandbox, and
   the REST API).
 
-- **Shipping a change to the package?** Follow **[RELEASING.md](RELEASING.md)** —
-  it is the canary→publish playbook: validate the change against the
+- **Shipping a change to the package?** Follow
+  **[Releasing csiapps](https://csiontario.github.io/csiapps/releasing/)** — it is
+  the canary→publish playbook: validate the change against the
   `dummy-python-shiny` and `dummy-python-dash` regression harnesses locally, push,
   re-validate on the deployed dummy apps, then publish to PyPI and update the docs.
 
