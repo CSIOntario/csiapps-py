@@ -127,7 +127,6 @@ uv sync                        # install deps + dev tools (both framework extras
 uv run pytest                  # run tests (framework suites skip if their extra is absent)
 uv run ruff check .            # lint
 uv build                       # build sdist + wheel
-uv run --group docs mkdocs serve   # preview docs
 
 # Prove the isolation locally, matching the CI jobs:
 uv sync --no-group shiny-tests --no-group dash-tests && uv run --no-sync pytest  # core only
@@ -135,3 +134,12 @@ uv sync --no-group dash-tests  && uv run --no-sync pytest                       
 uv sync --no-group shiny-tests && uv run --no-sync pytest                        # Dash only
 uv sync                                                                          # restore both
 ```
+
+The documentation site lives in its own repo,
+[`csiapps`](https://github.com/CSIOntario/csiapps) — there is no `mkdocs.yml`
+here. Its Python API reference autodocs from this package's docstrings on
+`main`, so a docstring change lands on the site the next time that repo is
+pushed. To preview, clone it alongside this one and run `mkdocs serve` there.
+
+Shipping a change to the package? Follow
+[Releasing csiapps](https://csiontario.github.io/csiapps/releasing/).

@@ -3,14 +3,13 @@
 Helper functions and utilities for CSI data warehouse ingestion and Shiny (for
 Python) or Dash web applications.
 
-The public API mirrors the R package's ``NAMESPACE`` and lands module by module
-across the porting phases (see ``PORTING_PLAN.md``):
+The public API mirrors the R package's ``NAMESPACE``, module by module:
 
-* ``config``  -- set_institute, is_sandbox_mode          (phase 2)
-* ``auth``    -- check_secrets, PKCE, token exchange       (phase 2)
-* ``client``  -- make_request, fetch_org_options/profiles  (phase 3)
-* ``sandbox`` -- register_sandbox_schema, create_*, ...     (phase 4)
-* ``chrome``  -- shared navbar/footer constants and copy    (phase 6)
+* ``config``  -- set_institute, is_sandbox_mode
+* ``auth``    -- check_secrets, PKCE, token exchange
+* ``client``  -- make_request, fetch_org_options/profiles
+* ``sandbox`` -- register_sandbox_schema, create_*, ...
+* ``chrome``  -- shared navbar/footer constants and copy
 
 Everything exported here is framework-independent: ingestion, auth, the HTTP
 client, and the sandbox depend on no web framework, so ``import csiapps`` pulls

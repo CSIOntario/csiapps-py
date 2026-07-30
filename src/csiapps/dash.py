@@ -262,8 +262,7 @@ def _register_auth_routes(server):
             return redirect("/")
 
         # Only the access token is stored, not the whole response: the session
-        # cookie has a ~4KB budget and refresh handling is out of scope (see
-        # DASH_PACKAGE_PLAN.md sections 11 and 12.2).
+        # cookie has a ~4KB budget and refresh handling is out of scope.
         session[TOKEN_KEY] = access_token
         userinfo = _load_userinfo(access_token)
         if userinfo:

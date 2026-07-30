@@ -56,5 +56,5 @@ def load_people(org):
 
 if __name__ == "__main__":
     # Single process, so the per-process sandbox registry seeded above is the
-    # same one every request sees. See DASH_PACKAGE_PLAN.md section 4.4.
+    # same one every request sees.
     app.run(debug=True, port=8050)
