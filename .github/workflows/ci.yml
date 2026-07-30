@@ -114,3 +114,46 @@ jobs:
             exit 1
           fi
           echo "confirmed: core imports no web framework"
+
+  # build: the artifact `uv publish` would upload must be buildable, valid on
+  # PyPI's terms, and installable -- checked here rather than discovered at
+  # publish time, which is the last step of the release and the worst moment to
+  # find a packaging error. See https://csiontario.github.io/csiapps/releasing/
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+      - name: Build sdist and wheel
+        run: uv build
+      # PyPI rejects an upload outright if the metadata or long description is
+      # malformed; --strict also fails on warnings, so a README that renders
+      # badly on the project page is caught here too.
+      - name: Validate distribution metadata
+        run: uvx twine check --strict dist/*
+      # Building is not installing: hatchling packaging both frameworks' modules
+      # is fine, but a missing package/data file, or an extra leaking into the
+      # base dependencies, only shows up on a real install into a clean env.
+      - name: Install the wheel into a clean env and verify the core contract
+        run: |
+          uv venv /tmp/wheeltest
+          VIRTUAL_ENV=/tmp/wheeltest uv pip install dist/*.whl
+          /tmp/wheeltest/bin/python -c "
+          import csiapps, importlib.util as u
+          import tomllib, pathlib
+          # The release checklist bumps pyproject.toml *and* __version__; they
+          # drift silently, and the wrong one ends up on the PyPI page.
+          declared = tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version']
+          assert csiapps.__version__ == declared, (
+              'version drift: pyproject.toml %s != __version__ %s' % (declared, csiapps.__version__))
+          assert not hasattr(csiapps, 'ui_wrapper'), 'wrappers must not be top-level'
+          for mod in ('shiny', 'dash', 'dash_auth', 'flask'):
+              assert u.find_spec(mod) is None, mod + ' leaked into a bare wheel install'
+          print('ok: csiapps', csiapps.__version__, '- core-only wheel installs clean')
+          "
+      - name: Upload dist/ for inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
