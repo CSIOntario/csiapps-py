@@ -21,12 +21,14 @@ def test_logo_follows_the_institute():
     assert "csi-pacific-logo" in chrome.logo_src()
     set_institute("csiontario")
     assert "logo-csi-ontario" in chrome.logo_src()
+    set_institute("csiatlantic")
+    assert "logo-institute.png" in chrome.logo_src()
 
 
 def test_logo_is_always_a_public_https_url():
     # Apps stop vendoring csi-pacific-logo-reverse.png and stop patching
     # server.static_folder; that only works if this is never a local path.
-    for institute in ("csipacific", "csiontario"):
+    for institute in ("csipacific", "csiontario", "csiatlantic"):
         set_institute(institute)
         assert chrome.logo_src().startswith("https://")
 
@@ -37,6 +39,9 @@ def test_institute_name_and_footer():
     assert chrome.footer_text() == f"© {date.today().year} CSI Pacific"
     set_institute("csiontario")
     assert chrome.institute_name() == "CSI Ontario"
+    set_institute("csiatlantic")
+    assert chrome.institute_name() == "CSI Atlantic"
+    assert chrome.footer_text() == f"© {date.today().year} CSI Atlantic"
 
 
 @pytest.mark.parametrize(
@@ -100,7 +105,7 @@ def render_dash(**kwargs):
 
 
 def test_both_frameworks_use_the_same_logo():
-    for institute in ("csipacific", "csiontario"):
+    for institute in ("csipacific", "csiontario", "csiatlantic"):
         set_institute(institute)
         assert chrome.logo_src() in str(ui_wrapper(sandbox=True))
         assert chrome.logo_src() in render_dash(sandbox=True)

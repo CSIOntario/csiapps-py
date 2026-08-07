@@ -16,7 +16,7 @@ import sys
 SPORT_ORG_ENDPOINT = "/api/registration/organization/"
 PROFILE_ENDPOINT = "/api/registration/profile/"
 
-_VALID_INSTITUTES = ("csipacific", "csiontario")
+_VALID_INSTITUTES = ("csipacific", "csiontario", "csiatlantic")
 
 
 def _message(text: str) -> None:
@@ -42,10 +42,11 @@ def set_institute(institute: str = "csipacific") -> None:
 
     Args:
         institute: Which CSI institute to target. Must be one of
-            ``"csipacific"`` or ``"csiontario"``. Defaults to ``"csipacific"``.
+            ``"csipacific"``, ``"csiontario"``, or ``"csiatlantic"``.
+            Defaults to ``"csipacific"``.
 
     Raises:
-        ValueError: If ``institute`` is not one of the two supported values.
+        ValueError: If ``institute`` is not one of the supported values.
 
     Example:
         ```python

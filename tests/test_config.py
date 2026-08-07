@@ -55,6 +55,14 @@ def test_set_institute_valid_and_urls():
     assert config.userinfo_url() == "https://apps.csiontario.ca/api/csiauth/me/"
 
 
+def test_set_institute_accepts_atlantic_and_builds_urls():
+    set_institute("csiatlantic")
+    assert config.site_url() == "https://apps.csiatlantic.ca"
+    assert config.auth_url() == "https://apps.csiatlantic.ca/o/authorize/"
+    assert config.token_url() == "https://apps.csiatlantic.ca/o/token/"
+    assert config.userinfo_url() == "https://apps.csiatlantic.ca/api/csiauth/me/"
+
+
 def test_set_institute_rejects_unknown():
     with pytest.raises(ValueError):
         set_institute("csiquebec")

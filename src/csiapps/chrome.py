@@ -68,8 +68,13 @@ UNAUTHENTICATED_TEXT = (
 _LOGOS = {
     "csipacific": "https://www.csipacific.ca/wp-content/uploads/2024/05/csi-pacific-logo-main.png",
     "csiontario": "https://csiontario.ca/wp-content/uploads/2022/03/logo-csi-ontario.png",
+    "csiatlantic": "https://www.csiatlantic.ca/sites/default/files/logo-institute.png",
 }
-_DISPLAY_NAMES = {"csipacific": "CSI Pacific", "csiontario": "CSI Ontario"}
+_DISPLAY_NAMES = {
+    "csipacific": "CSI Pacific",
+    "csiontario": "CSI Ontario",
+    "csiatlantic": "CSI Atlantic",
+}
 
 LOGO_HEIGHT = "48px"
 
