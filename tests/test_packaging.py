@@ -69,20 +69,6 @@ def test_wrappers_are_not_exported_from_the_package():
     assert not hasattr(csiapps, "server_wrapper")
 
 
-@requires_shiny
-def test_private_helpers_relocated_but_still_reachable():
-    # shiny._seed_token_value and shiny._signed_in_text are re-bound from
-    # auth/chrome. The names stay bound in csiapps.shiny so nothing that reached
-    # for them breaks.
-    from csiapps import auth, chrome
-    from csiapps import shiny as csishiny
-
-    assert csishiny._seed_token_value is auth.seed_sandbox_token
-    assert csishiny._signed_in_text is chrome.signed_in_text
-    assert csishiny._FAVICON == chrome.FAVICON
-    assert csishiny._logo_src() == chrome.logo_src()
-
-
 # ---- import purity -----------------------------------------------------
 
 

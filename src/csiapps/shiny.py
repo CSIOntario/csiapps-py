@@ -31,15 +31,6 @@ from shiny.ui import Tag
 
 from . import auth, chrome, client, config
 
-# The chrome constants and copy live in csiapps.chrome (framework-independent)
-# so csiapps.dash renders the identical navbar/footer without importing Shiny.
-# Re-bound here under their original private names: nothing outside this module
-# should have to care where they moved.
-_FAVICON = chrome.FAVICON
-_seed_token_value = auth.seed_sandbox_token
-_signed_in_text = chrome.signed_in_text
-
-
 # ---- per-session token store + adapter ---------------------------------
 #
 # The access token is stored per Shiny session (keyed on the session object, the
@@ -137,10 +128,6 @@ def _csi_chrome_styles():
     return ui.tags.style(ui.HTML(chrome.CHROME_CSS))
 
 
-def _logo_src():
-    return chrome.logo_src()
-
-
 def _navbar_ui():
     return ui.tags.nav(
         ui.tags.div(
@@ -225,7 +212,7 @@ def ui_wrapper(*args: TagChild, sandbox: bool | None = None) -> Tag:
     children = [
         ui.head_content(
             ui.tags.script(ui.HTML(_HANDLERS_JS)),
-            ui.tags.link(rel="shortcut icon", href=_FAVICON),
+            ui.tags.link(rel="shortcut icon", href=chrome.FAVICON),
         ),
         _csi_chrome_styles(),
         _navbar_ui(),
@@ -299,7 +286,7 @@ def server_wrapper(
         if sandbox:
             # Simulate the redirect: seed the token from the environment and hand
             # it to the same consumer a production login would.
-            user_token.set(_seed_token_value())
+            user_token.set(auth.seed_sandbox_token())
         else:
 
             @reactive.effect
@@ -388,7 +375,9 @@ def server_wrapper(
                 return ui.tags.p("Authentication error (see logs).")
             if tok.get("unauthenticated"):
                 return ui.tags.p(ui.HTML(chrome.UNAUTHENTICATED_TEXT))
-            return ui.TagList(ui.tags.br(), ui.tags.p(_signed_in_text(userinfo(), sandbox)))
+            return ui.TagList(
+                ui.tags.br(), ui.tags.p(chrome.signed_in_text(userinfo(), sandbox))
+            )
 
         @reactive.effect
         @reactive.event(input.logout, ignore_none=True)
@@ -396,7 +385,7 @@ def server_wrapper(
             userinfo.set(None)
             set_session_token(session, None)
             if sandbox:
-                user_token.set(_seed_token_value())
+                user_token.set(auth.seed_sandbox_token())
             else:
                 user_token.set(None)
                 await session.send_custom_message("csip_reset", {})

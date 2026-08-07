@@ -20,7 +20,7 @@ pytest.importorskip("shiny", reason="csiapps[shiny] not installed")
 
 from shiny import reactive, ui  # noqa: E402
 
-from csiapps import client, config, set_institute  # noqa: E402
+from csiapps import auth, chrome, client, config, set_institute  # noqa: E402
 from csiapps import shiny as csishiny  # noqa: E402
 from csiapps.shiny import server_wrapper, ui_wrapper  # noqa: E402
 
@@ -72,22 +72,22 @@ def test_server_wrapper_returns_callable_in_both_modes():
 
 def test_seed_token_value_without_token(monkeypatch):
     monkeypatch.delenv("CSIAPPS_ACCESS_TOKEN", raising=False)
-    seeded = csishiny._seed_token_value()
+    seeded = auth.seed_sandbox_token()
     assert seeded.get("access_token") is None
     assert seeded["unauthenticated"] is True
 
 
 def test_seed_token_value_with_token(monkeypatch):
     monkeypatch.setenv("CSIAPPS_ACCESS_TOKEN", "dev-token-abc")
-    seeded = csishiny._seed_token_value()
+    seeded = auth.seed_sandbox_token()
     assert seeded["access_token"] == "dev-token-abc"
     assert "unauthenticated" not in seeded
 
 
 def test_signed_in_text_variants():
-    signed = csishiny._signed_in_text({"first_name": "Ada", "last_name": "L"}, False)
+    signed = chrome.signed_in_text({"first_name": "Ada", "last_name": "L"}, False)
     assert signed == "Signed in as Ada L"
-    assert csishiny._signed_in_text(None, True) == "Signed in (sandbox)"
+    assert chrome.signed_in_text(None, True) == "Signed in (sandbox)"
 
 
 # ---- per-session token store + adapter ---------------------------------

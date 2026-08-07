@@ -17,7 +17,6 @@ State lives for the process; :func:`clear_sandbox` resets it (test teardown).
 import json
 import os
 import random
-import re
 import secrets
 import shutil
 import tempfile
@@ -51,11 +50,6 @@ def sandbox_dir() -> str:
         d = tempfile.mkdtemp(prefix="csiapps_sandbox_")
         _state["dir"] = d
     return d
-
-
-def normalize_endpoint(endpoint: str) -> str:
-    """Strip leading/trailing slashes so routing tolerates both forms."""
-    return endpoint.strip("/")
 
 
 def sandbox_error(status: int, msg: str):
@@ -169,7 +163,6 @@ def clear_sandbox(source_uuid: str | None = None) -> None:
             if os.path.isdir(target):
                 shutil.rmtree(target, ignore_errors=True)
         _message(f"csiapps sandbox: cleared source '{source_uuid}'")
-    return None
 
 
 def browse_sandbox(source_uuid: str | None = None) -> str:
@@ -210,10 +203,6 @@ def browse_sandbox(source_uuid: str | None = None) -> str:
 
 
 # ---- dummy registration registry (sport orgs + athletes) ---------------
-
-
-def _org_ids():
-    return [int(o["id"]) for o in _state["orgs"].values()]
 
 
 def _resolve_subject(record, subject_field):
@@ -348,7 +337,7 @@ def create_sport_org(name: str, id: int | None = None) -> dict:
     if not (isinstance(name, str) and name):
         raise ValueError("create_sport_org: `name` must be a non-empty string.")
 
-    existing = _org_ids()
+    existing = [int(org_id) for org_id in _state["orgs"]]
     if id is None:
         pool = [i for i in range(1, 1000) if i not in existing]
         if not pool:
@@ -495,13 +484,14 @@ def _make_sandbox_request(
 ):
     if query is None:
         query = {}
-    ep = normalize_endpoint(endpoint)
+    ep = endpoint.strip("/")
     method = method.upper()
     _message(f"csiapps sandbox: emulating {method} {ep} (no real API call made)")
 
     # ROUTE 1: schema retrieval -- GET api/warehouse/data-sources/{uuid}
-    if re.match(r"^api/warehouse/data-sources/.+$", ep) and method == "GET":
-        source_uuid = re.sub(r"^api/warehouse/data-sources/", "", ep)
+    schema_prefix = "api/warehouse/data-sources/"
+    if ep.startswith(schema_prefix) and ep != schema_prefix and method == "GET":
+        source_uuid = ep.removeprefix(schema_prefix)
         schema = _state["schemas"].get(source_uuid)
         if schema is None:
             sandbox_error(

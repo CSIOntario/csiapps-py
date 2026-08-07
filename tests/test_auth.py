@@ -41,7 +41,16 @@ def test_check_secrets_production_raises_on_bad_redirect():
 def test_check_secrets_production_ok(monkeypatch):
     config.set_sandbox_mode(False)
     monkeypatch.setenv("CSIAPPS_REDIRECT_URI", "https://apps.csiontario.ca/callback")
+    monkeypatch.setenv("CSIAPPS_CLIENT_ID", "cid")
+    monkeypatch.setenv("CSIAPPS_CLIENT_SECRET", "secret")
     assert auth.check_secrets() is True
+
+
+def test_check_secrets_production_requires_client_credentials(monkeypatch):
+    config.set_sandbox_mode(False)
+    monkeypatch.setenv("CSIAPPS_REDIRECT_URI", "https://apps.csiontario.ca/callback")
+    with pytest.raises(ValueError, match="CSIAPPS_CLIENT_ID, CSIAPPS_CLIENT_SECRET"):
+        auth.check_secrets()
 
 
 @respx.mock

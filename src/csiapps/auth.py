@@ -10,7 +10,6 @@ import base64
 import hashlib
 import json
 import os
-import re
 import secrets
 
 import httpx
@@ -128,10 +127,9 @@ def check_secrets(verbose: bool = False, sandbox: bool | None = None) -> bool:
       simulates login and needs no client credentials). Instead the presence or
       absence of ``CSIAPPS_ACCESS_TOKEN`` is reported to stderr, and the function
       never raises.
-    - **Production mode:** the OAuth URLs derived from the configured institute
-      plus ``CSIAPPS_REDIRECT_URI`` are checked for a well-formed ``http(s)``
-      scheme, and a :class:`ValueError` is raised listing any that are missing or
-      malformed.
+    - **Production mode:** the OAuth client credentials and the URLs derived
+      from the configured institute plus ``CSIAPPS_REDIRECT_URI`` are checked,
+      and a :class:`ValueError` lists anything missing or malformed.
 
     Args:
         verbose: If ``True``, dump the resolved CSIAPPS environment (client id,
@@ -145,12 +143,12 @@ def check_secrets(verbose: bool = False, sandbox: bool | None = None) -> bool:
     Returns:
         bool: Always ``True`` when the environment is usable. In production the
         function raises rather than returning ``False``, so a ``True`` return is
-        a positive assurance the required URLs are present.
+        a positive assurance the required configuration is present.
 
     Raises:
-        ValueError: In production mode only, if any of ``CSIAPPS_AUTH_URL``,
-            ``CSIAPPS_TOKEN_URL``, or ``CSIAPPS_REDIRECT_URI`` is missing or does
-            not start with ``http://`` or ``https://``.
+        ValueError: In production mode only, if the client id or secret is
+            missing, or an OAuth URL does not start with ``http://`` or
+            ``https://``.
 
     Example:
         ```python
@@ -180,16 +178,28 @@ def check_secrets(verbose: bool = False, sandbox: bool | None = None) -> bool:
             )
         return True
 
-    url_re = re.compile(r"^https?://")
-    bad = []
-    if not url_re.match(config.auth_url()):
-        bad.append("CSIAPPS_AUTH_URL")
-    if not url_re.match(config.token_url()):
-        bad.append("CSIAPPS_TOKEN_URL")
-    if not url_re.match(os.environ.get("CSIAPPS_REDIRECT_URI", "")):
-        bad.append("CSIAPPS_REDIRECT_URI")
-    if bad:
-        raise ValueError("Invalid or missing URL env vars: " + ", ".join(bad))
+    urls = {
+        "CSIAPPS_AUTH_URL": config.auth_url(),
+        "CSIAPPS_TOKEN_URL": config.token_url(),
+        "CSIAPPS_REDIRECT_URI": os.environ.get("CSIAPPS_REDIRECT_URI", ""),
+    }
+    bad_urls = [
+        name
+        for name, value in urls.items()
+        if not value.startswith(("http://", "https://"))
+    ]
+    missing_credentials = [
+        name
+        for name in ("CSIAPPS_CLIENT_ID", "CSIAPPS_CLIENT_SECRET")
+        if not os.environ.get(name)
+    ]
+    problems = []
+    if bad_urls:
+        problems.append("invalid or missing URL env vars: " + ", ".join(bad_urls))
+    if missing_credentials:
+        problems.append("missing credential env vars: " + ", ".join(missing_credentials))
+    if problems:
+        raise ValueError("; ".join(problems))
 
     if verbose:
         _message(

@@ -18,13 +18,6 @@ from . import config
 
 FAVICON = "https://csiontario.ca/wp-content/uploads/2022/04/cropped-CSIO-Favicon-192x192.png"
 
-# Navbar/footer palette. Kept as named constants because CHROME_CSS below is a
-# plain string (no f-string): the CSS carries literal `{`/`}` on every rule and
-# doubling them all to interpolate three colours is worse than writing them out.
-ACCENT = "#d81f26"
-BAR_BG = "#ffffff"
-BAR_TEXT = "#1f2937"
-
 # Neutral frame: white bar, CSI-red accent line, soft shadow. Scoped by id +
 # !important so a wrapped app's theme/CSS cannot override it.
 CHROME_CSS = """
