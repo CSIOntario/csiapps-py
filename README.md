@@ -104,7 +104,8 @@ def load(org):                    # no token handling; the helper resolves it
 
 In production set `CSIAPPS_CLIENT_ID`, `CSIAPPS_CLIENT_SECRET`,
 `CSIAPPS_REDIRECT_URI` (pointing at `/redirect`), and
-`CSIAPPS_SECRET_KEY` — a stable ≥32-character value that signs the session
+`CSIAPPS_SECRET_KEY` — a stable ≥32-character value generated separately for
+each deployed Dash app and shared by that app's workers. It signs the session
 cookie. `attach()` raises at startup if it is missing, since the alternative is
 an unexplained login loop.
 

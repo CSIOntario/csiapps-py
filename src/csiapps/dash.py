@@ -30,6 +30,7 @@ PKCE helpers — is framework-independent and used unchanged.
 """
 
 import os
+import secrets
 import warnings
 from collections.abc import Callable
 from urllib.parse import urlencode
@@ -68,6 +69,8 @@ CSS_ROUTE = f"{AUTH_PREFIX}/chrome.css"
 TOKEN_KEY = "csi_token"
 USER_KEY = "csi_user"
 NEXT_KEY = "csi_next"
+STATE_KEY = "csi_oauth_state"
+VERIFIER_KEY = "csi_pkce_verifier"
 
 
 class _FlaskTokenAdapter:
@@ -208,6 +211,9 @@ class _CsiAuth(_DashAuth):
         # Remember where the user was headed so the redirect route can return
         # them there instead of dumping everyone on "/".
         session[NEXT_KEY] = request.full_path
+        state = secrets.token_urlsafe(32)
+        session[STATE_KEY] = state
+        session[VERIFIER_KEY] = pkce["verifier"]
         params = {
             "response_type": "code",
             "client_id": os.environ.get("CSIAPPS_CLIENT_ID", ""),
@@ -215,7 +221,7 @@ class _CsiAuth(_DashAuth):
             "scope": os.environ.get("CSIAPPS_SCOPE", "read write"),
             "code_challenge": pkce["challenge"],
             "code_challenge_method": pkce["method"],
-            "state": auth.pkce_state_encode(pkce["verifier"]),
+            "state": state,
         }
         return redirect(config.auth_url() + "?" + urlencode(params))
 
@@ -239,16 +245,15 @@ def _register_auth_routes(server):
             session.clear()
             return redirect("/")
 
-        state = request.args.get("state")
-        verifier = None
-        if state:
-            try:
-                verifier = auth.pkce_state_decode(state).get("v")
-            except Exception:
-                # A malformed/tampered state is not a crash: drop the session and
-                # restart the flow from the guard.
-                session.clear()
-                return redirect("/")
+        state = request.args.get("state", "")
+        expected_state = session.pop(STATE_KEY, "")
+        verifier = session.pop(VERIFIER_KEY, "")
+        if not (state and expected_state and verifier
+                and secrets.compare_digest(state, expected_state)):
+            # Reject callbacks not initiated by this browser session, including
+            # mismatches and replays, before sending anything to the token endpoint.
+            session.clear()
+            return redirect("/")
 
         token = auth.exchange_code_for_token(code, verifier)
         access_token = token.get("access_token") if isinstance(token, dict) else None
