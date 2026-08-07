@@ -65,8 +65,7 @@ CSS_ROUTE = f"{AUTH_PREFIX}/chrome.css"
 
 # Flask session keys. The token key is defined here (this module owns the Flask
 # side of token storage) and read back through the adapter below.
-FLASK_TOKEN_KEY = "csi_token"
-TOKEN_KEY = FLASK_TOKEN_KEY
+TOKEN_KEY = "csi_token"
 USER_KEY = "csi_user"
 NEXT_KEY = "csi_next"
 
@@ -84,7 +83,7 @@ class _FlaskTokenAdapter:
         if not has_request_context():
             return None
         try:
-            return session.get(FLASK_TOKEN_KEY) or None
+            return session.get(TOKEN_KEY) or None
         except Exception:
             # An unreadable/tampered session cookie must not take the app down;
             # fall through to the env var and the normal unauthenticated gate.
@@ -235,12 +234,8 @@ def _register_css_route(server):
 def _register_auth_routes(server):
     @server.route(REDIRECT_ROUTE)
     def _csiapps_oauth_redirect():
-        if request.args.get("error"):
-            session.clear()
-            return redirect("/")
-
         code = request.args.get("code")
-        if not code:
+        if request.args.get("error") or not code:
             session.clear()
             return redirect("/")
 
