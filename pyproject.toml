@@ -1,7 +1,7 @@
 [project]
 name = "csiapps"
-version = "0.3.2"
-description = "Helper functions and utilities for CSI data warehouse ingestion and Shiny or Dash web applications (Python port of the csiapps R package)."
+version = "0.4.0"
+description = "Helper functions and utilities for CSI data warehouse ingestion and Shiny, Dash, or Streamlit web applications (Python port of the csiapps R package)."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
@@ -9,7 +9,7 @@ authors = [
     { name = "David Awosoga", email = "dawosoga@csiontario.ca" },
     { name = "Kyu Min Shim", email = "kmshim@uwaterloo.ca" },
 ]
-keywords = ["csi", "warehouse", "shiny", "dash", "oauth2", "csiontario"]
+keywords = ["csi", "warehouse", "shiny", "dash", "streamlit", "oauth2", "csiontario"]
 dependencies = [
     "httpx>=0.27",
     "jsonschema>=4.21",
@@ -17,9 +17,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The web frameworks are symmetric, mutually exclusive optional extras: a Shiny
-# app installs `[shiny]`, a Dash app installs `[dash]`, and the core (ingestion,
-# auth, client, sandbox, shared chrome) depends on neither. See
+# The web frameworks are symmetric, mutually exclusive optional extras: each
+# app installs only its own framework, while the core (ingestion, auth, client,
+# sandbox, shared chrome) depends on none of them. See
 # https://csiontario.github.io/csiapps/migrating/.
 shiny = [
     "shiny>=1.0",
@@ -27,6 +27,10 @@ shiny = [
 dash = [
     "dash>=3.0",
     "dash-auth>=2.3",
+]
+streamlit = [
+    "streamlit>=1.60",
+    "cryptography>=43",
 ]
 
 [project.urls]
@@ -40,14 +44,15 @@ dev = [
     "respx>=0.21",  # httpx mocking for client tests (phase 3)
 ]
 # Each framework's tests are kept in their own group so CI can install one extra
-# and prove the other framework is genuinely absent (e.g. `uv sync --no-group
-# dash-tests`). Both framework test suites skip themselves when their extra is
-# absent, so the core-only install runs the core suite cleanly.
+# and prove the other frameworks are genuinely absent (e.g. `uv sync --no-group
+# dash-tests --no-group streamlit-tests`). Framework test suites skip themselves
+# when their extra is absent, so the core-only install runs the core suite cleanly.
 shiny-tests = ["csiapps[shiny]"]
 dash-tests = ["csiapps[dash]"]
+streamlit-tests = ["csiapps[streamlit]"]
 
 [tool.uv]
-default-groups = ["dev", "shiny-tests", "dash-tests"]
+default-groups = ["dev", "shiny-tests", "dash-tests", "streamlit-tests"]
 
 [build-system]
 requires = ["hatchling"]

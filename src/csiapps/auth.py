@@ -105,8 +105,8 @@ def seed_sandbox_token() -> dict:
     login and load ``/me``. With none set, a sentinel marks the session
     unauthenticated and the consumer short-circuits before any network call.
 
-    Framework-independent on purpose — both the Shiny wrapper and the Dash
-    wrapper need exactly one definition of what a simulated login looks like.
+    Framework-independent on purpose — every framework wrapper needs exactly
+    one definition of what a simulated login looks like.
     """
     tok = os.environ.get("CSIAPPS_ACCESS_TOKEN", "")
     if tok:

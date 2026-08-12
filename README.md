@@ -2,20 +2,21 @@
 
 Python port of the CSIO [`csiapps`](https://github.com/CSIOntario/csiapps-r) R
 package. Helper functions and utilities for CSI data warehouse ingestion and
-[Shiny for Python](https://shiny.posit.co/py/) or [Dash](https://dash.plotly.com/)
-web applications.
+[Shiny for Python](https://shiny.posit.co/py/), [Dash](https://dash.plotly.com/),
+or [Streamlit](https://streamlit.io/) web applications.
 
 Full feature parity with the R package: the API client (`make_request`,
 `fetch_*`), the local sandbox (schema → ingest → retrieve, plus a dummy
 registration registry), and per-framework app wrappers for Shiny
 ([`csiapps.shiny`](#shiny-apps): `ui_wrapper`, `server_wrapper`) and Dash
-([`csiapps.dash`](#dash-apps): `layout_wrapper`, `attach`). **Sandbox mode is on
-by default** so nothing hits production by accident.
+([`csiapps.dash`](#dash-apps): `layout_wrapper`, `attach`) and Streamlit
+([`csiapps.streamlit`](#streamlit-apps): `page_wrapper`).
+**Sandbox mode is on by default** so nothing hits production by accident.
 
 The core — client, sandbox, and OAuth2 PKCE helpers — is framework-independent
-and depends on neither framework, so `import csiapps` pulls in no web framework
-at all. The two frameworks are symmetric, mutually exclusive optional extras:
-each app installs and imports only the one it uses.
+and depends on no framework, so `import csiapps` pulls in no web framework at
+all. The frameworks are symmetric, mutually exclusive optional extras: each app
+installs and imports only the one it uses.
 
 ## Installation
 
@@ -28,6 +29,7 @@ For an app, add the extra for your framework:
 ```bash
 pip install 'csiapps[shiny]'   # Shiny app
 pip install 'csiapps[dash]'    # Dash app
+pip install 'csiapps[streamlit]' # Streamlit app
 ```
 
 > **Migrating from 0.2.x (breaking):** Shiny is no longer a hard dependency and
@@ -114,26 +116,71 @@ no credentials and no network. Deploy sandbox apps with `--workers 1`: the
 sandbox registry is per-process, so extra workers each invent their own dummy
 athletes.
 
+## Streamlit apps
+
+Streamlit apps use one ordinary, native Streamlit entrypoint. Wrap a
+zero-argument function with `page_wrapper()` and keep every protected read and
+piece of app UI inside that function:
+
+```python
+# app.py -- run with: streamlit run app.py
+import streamlit as st
+import csiapps
+from csiapps.streamlit import page_wrapper
+
+def dashboard():
+    organisations = csiapps.fetch_org_options()
+    org = st.selectbox(
+        "Organisation", options=list(organisations), format_func=organisations.get
+    )
+    if org:
+        profiles = csiapps.fetch_profiles(filters={"sport_org_id": int(org)})
+        st.dataframe(
+            [csiapps.flatten_profile(profile) for profile in profiles], width="stretch"
+        )
+
+page_wrapper(dashboard)
+```
+
+In production, `CSIAPPS_REDIRECT_URI` is the exact public URL of the Streamlit
+app itself (no `/redirect` suffix). It must use HTTPS except on localhost.
+`CSIAPPS_SECRET_KEY` must be a stable random value of at least 32 bytes, unique
+to the app and shared by its Connect Cloud replicas. `page_wrapper()` uses PKCE
+and ten-minute AES-GCM encrypted, browser-bound OAuth state. The nonce cookie
+contains no credential; the access token stays only in the server-side
+Streamlit session and is resolved automatically by `fetch_*` helpers. A hard
+reload or browser navigation starts a fresh sign-in, which avoids putting a
+delegated token in browser storage.
+
+This native entrypoint is compatible with Posit Connect Cloud: choose
+**Streamlit** as the framework and `app.py` as the primary file. Configure
+secrets as Connect Cloud environment variables; do not use `st.secrets`.
+
+Sandbox mode needs no credentials or network. As with the other frameworks,
+use one worker for a sandbox deployment because its dummy registry is
+in-process.
+
 See the [cross-language documentation](https://csiontario.github.io/csiapps/)
 (R and Python side by side, plus a [parity checklist](https://csiontario.github.io/csiapps/parity/))
 and the runnable [`examples/`](examples/) (`warehouse_ingest.py`, `app.py`,
-`dash_app.py`).
+`dash_app.py`, `streamlit_app.py`).
 
 ## Development
 
 Uses [uv](https://docs.astral.sh/uv/).
 
 ```bash
-uv sync                        # install deps + dev tools (both framework extras)
+uv sync                        # install deps + dev tools (all framework extras)
 uv run pytest                  # run tests (framework suites skip if their extra is absent)
 uv run ruff check .            # lint
 uv build                       # build sdist + wheel
 
 # Prove the isolation locally, matching the CI jobs:
-uv sync --no-group shiny-tests --no-group dash-tests && uv run --no-sync pytest  # core only
-uv sync --no-group dash-tests  && uv run --no-sync pytest                        # Shiny only
-uv sync --no-group shiny-tests && uv run --no-sync pytest                        # Dash only
-uv sync                                                                          # restore both
+uv sync --no-group shiny-tests --no-group dash-tests --no-group streamlit-tests && uv run --no-sync pytest  # core only
+uv sync --no-group dash-tests --no-group streamlit-tests && uv run --no-sync pytest  # Shiny only
+uv sync --no-group shiny-tests --no-group streamlit-tests && uv run --no-sync pytest # Dash only
+uv sync --no-group shiny-tests --no-group dash-tests && uv run --no-sync pytest      # Streamlit only
+uv sync                                                                                # restore all
 ```
 
 The documentation site lives in its own repo,

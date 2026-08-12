@@ -1,7 +1,7 @@
 """Import-surface guarantees: the core depends on no web framework.
 
-The refactor's whole point is that `import csiapps` pulls in neither Shiny nor
-Dash, and that each framework wrapper installs and imports only its own
+The refactor's whole point is that `import csiapps` pulls in no web framework,
+and that each framework wrapper installs and imports only its own
 framework. The subprocess tests assert things about a *fresh* interpreter's
 sys.modules, which the test session has already polluted.
 """
@@ -23,6 +23,10 @@ requires_shiny = pytest.mark.skipif(
 requires_dash = pytest.mark.skipif(
     importlib.util.find_spec("dash") is None, reason="csiapps[dash] not installed"
 )
+requires_streamlit = pytest.mark.skipif(
+    importlib.util.find_spec("streamlit") is None,
+    reason="csiapps[streamlit] not installed",
+)
 
 
 def run(code):
@@ -38,7 +42,7 @@ def run(code):
 
 def test_public_api():
     # The exact framework-independent __all__. The web-app wrappers are NOT here:
-    # they live in the csiapps.shiny / csiapps.dash submodules, imported
+    # they live in explicit framework submodules, imported
     # explicitly, so importing csiapps costs no web framework.
     assert set(csiapps.__all__) == {
         "__version__",
@@ -67,6 +71,8 @@ def test_wrappers_are_not_exported_from_the_package():
     # package; consumers migrate to `from csiapps.shiny import ...`.
     assert not hasattr(csiapps, "ui_wrapper")
     assert not hasattr(csiapps, "server_wrapper")
+    assert not hasattr(csiapps, "create_app")
+    assert not hasattr(csiapps, "page_wrapper")
 
 
 # ---- import purity -----------------------------------------------------
@@ -78,7 +84,9 @@ def test_importing_csiapps_imports_no_web_framework():
         """
         import sys
         import csiapps
-        leaked = sorted(m for m in ('shiny', 'dash', 'dash_auth', 'flask', 'werkzeug')
+        leaked = sorted(m for m in (
+            'shiny', 'dash', 'dash_auth', 'flask', 'werkzeug', 'streamlit', 'starlette'
+        )
                         if m in sys.modules)
         print(','.join(leaked))
         """
@@ -102,19 +110,21 @@ def test_importing_csiapps_registers_no_token_adapter():
 
 @requires_shiny
 @requires_dash
-def test_the_two_wrappers_coexist_in_one_process():
-    # Both frameworks must work in one process: someone will import both while
+@requires_streamlit
+def test_the_three_wrappers_coexist_in_one_process():
+    # All frameworks must work in one process: someone will import them while
     # migrating an app, and their adapters must not collide.
     out = run(
         """
         import csiapps
         from csiapps.shiny import ui_wrapper
         from csiapps.dash import attach, layout_wrapper
+        import csiapps.streamlit
         from csiapps import client
         csiapps.set_sandbox_mode(True)
         assert 'csi-navbar' in str(ui_wrapper())
         assert 'csi-navbar' in str(layout_wrapper()())
-        assert len(client._token_adapters) == 2
+        assert len(client._token_adapters) == 3
         print('ok')
         """
     )
@@ -136,6 +146,16 @@ def test_csiapps_shiny_is_not_auto_imported_by_the_package():
         """
         import sys, csiapps
         print('csiapps.shiny' in sys.modules)
+        """
+    )
+    assert loaded == "False"
+
+
+def test_csiapps_streamlit_is_not_auto_imported_by_the_package():
+    loaded = run(
+        """
+        import sys, csiapps
+        print('csiapps.streamlit' in sys.modules)
         """
     )
     assert loaded == "False"
@@ -168,8 +188,30 @@ def test_missing_dash_extra_raises_a_guided_import_error():
     assert out.endswith("guided")
 
 
+def test_missing_streamlit_extra_raises_a_guided_import_error():
+    out = run(
+        """
+        import sys
+        class Blocker:
+            def find_spec(self, name, path=None, target=None):
+                if name.split('.')[0] in ('streamlit', 'cryptography'):
+                    raise ImportError(f"No module named {name!r}")
+                return None
+        sys.meta_path.insert(0, Blocker())
+        try:
+            import csiapps.streamlit
+        except ImportError as e:
+            assert "pip install 'csiapps[streamlit]'" in str(e), str(e)
+            print('guided')
+        else:
+            raise AssertionError('expected ImportError')
+        """
+    )
+    assert out.endswith("guided")
+
+
 def test_core_works_with_no_web_framework_installed():
-    # The pure-ingestion path: block both frameworks, and csiapps core still
+    # The pure-ingestion path: block every framework, and csiapps core still
     # imports and resolves the env token. This is the strict improvement over the
     # old hard Shiny dependency.
     out = run(
@@ -177,7 +219,9 @@ def test_core_works_with_no_web_framework_installed():
         import sys
         class Blocker:
             def find_spec(self, name, path=None, target=None):
-                if name.split('.')[0] in ('shiny', 'dash', 'dash_auth', 'flask'):
+                if name.split('.')[0] in (
+                    'shiny', 'dash', 'dash_auth', 'flask', 'streamlit', 'cryptography'
+                ):
                     raise ImportError(f"No module named {name!r}")
                 return None
         sys.meta_path.insert(0, Blocker())

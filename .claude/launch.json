@@ -12,6 +12,12 @@
       "runtimeExecutable": "uv",
       "runtimeArgs": ["run", "python", "examples/dash_app.py"],
       "port": 8050
+    },
+    {
+      "name": "example-streamlit-app",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "streamlit", "run", "examples/streamlit_app.py"],
+      "port": 8501
     }
   ]
 }

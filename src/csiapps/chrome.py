@@ -1,10 +1,9 @@
 """Framework-independent CSI chrome: styles, logos, and the copy around them.
 
-Both :mod:`csiapps.shiny` (Shiny) and :mod:`csiapps.dash` (Dash) render the same
-navbar, footer, sandbox banner and auth-status line. Only the *tag construction*
-differs between the two frameworks; the CSS, the logo URLs and the wording do
-not. They live here so the two renderers cannot drift, and so that a Dash
-process never has to import Shiny to reach them.
+The Shiny, Dash, and Streamlit adapters render the same navbar, footer, sandbox
+banner, and auth-status line. Only the *tag construction* differs between the
+frameworks; the CSS, logo URLs, and wording do not. They live here so the three
+renderers cannot drift and no adapter has to import another framework.
 
 Nothing in this module imports a web framework.
 

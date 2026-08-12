@@ -416,7 +416,7 @@ def _footer():
 
 def _sandbox_banner():
     # style= is a dict in Dash; the shared CSS-text constant is parsed rather
-    # than duplicated so the two frameworks cannot drift apart.
+    # than duplicated so the framework renderers cannot drift apart.
     style = {}
     for decl in chrome.SANDBOX_BANNER_STYLE.split(";"):
         if ":" not in decl:
