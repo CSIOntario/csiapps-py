@@ -152,6 +152,11 @@ Streamlit session and is resolved automatically by `fetch_*` helpers. A hard
 reload or browser navigation starts a fresh sign-in, which avoids putting a
 delegated token in browser storage.
 
+On a fresh session, the app immediately starts CSI authorization. Visitors who
+already have a CSI Access session proceed without an extra click; signed-out
+visitors see CSI's login page. The sign-in button remains as a fallback after
+logout or an authentication error.
+
 This native entrypoint is compatible with Posit Connect Cloud: choose
 **Streamlit** as the framework and `app.py` as the primary file. Configure
 secrets as Connect Cloud environment variables; do not use `st.secrets`.

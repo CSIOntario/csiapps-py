@@ -28,6 +28,10 @@ class Rerun(Exception):
     pass
 
 
+class Stop(Exception):
+    pass
+
+
 @pytest.fixture
 def prod_env(monkeypatch):
     monkeypatch.setenv("CSIAPPS_CLIENT_ID", "test-client")
@@ -131,6 +135,7 @@ def test_successful_callback_stores_token_server_side_and_restores_query(
     monkeypatch, prod_env, streamlit_state
 ):
     query, session, context = streamlit_state
+    session[csist.LOGIN_PAUSED_KEY] = True
     context.cookies[csist.COOKIE_NAME] = "browser"
     query.update({"code": "auth-code", "state": sealed_state()})
     captured = {}
@@ -151,6 +156,7 @@ def test_successful_callback_stores_token_server_side_and_restores_query(
     assert captured == {"code": "auth-code", "verifier": "pkce-verifier"}
     assert session[csist.SESSION_KEY]["access_token"] == "browser-token"
     assert session[csist.SESSION_KEY]["expires_at"] == 4601
+    assert csist.LOGIN_PAUSED_KEY not in session
     assert query == {"year": "2026"}
 
 
@@ -253,12 +259,51 @@ def test_login_html_sets_only_nonce_cookie_and_uses_secure_redirect():
         "browser-nonce",
         "/content/app",
         True,
+        auto_redirect=True,
     )
     assert f"{csist.COOKIE_NAME}=browser-nonce" in rendered
     assert "SameSite=Lax" in rendered
     assert "Secure" in rendered
     assert "access_token" not in rendered
-    assert "window.location.assign" in rendered
+    assert "window.location.replace" in rendered
+    assert "\nstartLogin();\n" in rendered
+
+
+def test_login_html_keeps_manual_retry_after_error_or_logout():
+    rendered = csist._login_html(
+        "https://apps.csiontario.ca/o/authorize/",
+        "browser-nonce",
+        "/",
+        True,
+        auto_redirect=False,
+    )
+    assert "Sign in with CSI" in rendered
+    assert "\nstartLogin();\n" not in rendered
+
+
+def test_logout_pauses_automatic_login(monkeypatch, streamlit_state):
+    query, session, _ = streamlit_state
+    query[csist.LOGOUT_PARAM] = "1"
+    rendered = []
+    monkeypatch.setattr(
+        csist,
+        "_require_production_config",
+        lambda: (GOOD_KEY, REDIRECT, True, "/"),
+    )
+    monkeypatch.setattr(csist, "_finish_login", lambda *args: None)
+    monkeypatch.setattr(
+        csist, "_login_transaction", lambda *args: ("https://login.example/", "nonce")
+    )
+    monkeypatch.setattr(csist.st, "title", lambda *args: None)
+    monkeypatch.setattr(csist.st, "write", lambda *args: None)
+    monkeypatch.setattr(csist.st, "html", lambda value, **kwargs: rendered.append(value))
+    monkeypatch.setattr(csist.st, "stop", lambda: (_ for _ in ()).throw(Stop()))
+
+    with pytest.raises(Stop):
+        csist._authenticate()
+
+    assert session[csist.LOGIN_PAUSED_KEY] is True
+    assert "\nstartLogin();\n" not in rendered[0]
 
 
 def test_page_wrapper_authenticates_before_running_body(monkeypatch):

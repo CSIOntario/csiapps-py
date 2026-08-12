@@ -39,6 +39,7 @@ except ImportError as exc:  # pragma: no cover - exercised by no-extra CI
 
 COOKIE_NAME = "csiapps_oauth_nonce"
 SESSION_KEY = "_csiapps_streamlit_session"
+LOGIN_PAUSED_KEY = "_csiapps_streamlit_login_paused"
 LOGOUT_PARAM = "csiapps_logout"
 AUTH_TTL_SECONDS = 10 * 60
 MIN_SECRET_KEY_BYTES = 32
@@ -287,7 +288,12 @@ def _js_string(value: str) -> str:
 
 
 def _login_html(
-    login_url: str, browser_nonce: str, cookie_path: str, secure: bool
+    login_url: str,
+    browser_nonce: str,
+    cookie_path: str,
+    secure: bool,
+    *,
+    auto_redirect: bool,
 ) -> str:
     cookie = (
         f"{COOKIE_NAME}={browser_nonce}; Max-Age={AUTH_TTL_SECONDS}; "
@@ -302,10 +308,12 @@ def _login_html(
 </style>
 <button id="csiapps-login" type="button">Sign in with CSI</button>
 <script>
-document.getElementById("csiapps-login").addEventListener("click", () => {{
+const startLogin = () => {{
   document.cookie = {_js_string(cookie)};
-  window.location.assign({_js_string(login_url)});
-}});
+  window.location.replace({_js_string(login_url)});
+}};
+document.getElementById("csiapps-login").addEventListener("click", startLogin);
+{"startLogin();" if auto_redirect else ""}
 </script>
 """
 
@@ -346,6 +354,7 @@ def _finish_login(secret_key: str, redirect_uri: str) -> str | None:
     if isinstance(expires_in, (int, float)) and expires_in > 0:
         session["expires_at"] = time.time() + expires_in
     st.session_state[SESSION_KEY] = session
+    st.session_state.pop(LOGIN_PAUSED_KEY, None)
     _set_query(
         {
             str(key): str(value)
@@ -362,6 +371,7 @@ def _authenticate() -> dict:
     query = _query_dict()
     if LOGOUT_PARAM in query:
         st.session_state.pop(SESSION_KEY, None)
+        st.session_state[LOGIN_PAUSED_KEY] = True
         _set_query(_without_auth_query(query))
 
     session = _streamlit_session()
@@ -370,12 +380,19 @@ def _authenticate() -> dict:
 
     error = _finish_login(secret_key, redirect_uri)
     if error:
+        st.session_state[LOGIN_PAUSED_KEY] = True
         st.error(error)
     login_url, browser_nonce = _login_transaction(secret_key, redirect_uri)
     st.title("Sign in")
     st.write("Sign in with your CSI account to continue.")
     st.html(
-        _login_html(login_url, browser_nonce, cookie_path, secure),
+        _login_html(
+            login_url,
+            browser_nonce,
+            cookie_path,
+            secure,
+            auto_redirect=not st.session_state.get(LOGIN_PAUSED_KEY, False),
+        ),
         unsafe_allow_javascript=True,
     )
     st.stop()
