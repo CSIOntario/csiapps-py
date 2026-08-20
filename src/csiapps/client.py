@@ -18,6 +18,7 @@ import time
 from urllib.parse import quote
 
 import httpx
+import pandas as pd
 
 from . import config
 
@@ -280,6 +281,122 @@ def make_request(
     return _http_request(
         endpoint, method, body, query, headers, token, timeout, verbose, paginate, max_pages
     )
+
+
+def fetch_ams_mapping(
+    source_uuid: str | None = None,
+    token: str | None = None,
+    sandbox: bool | None = None,
+    max_pages: int = 50,
+) -> pd.DataFrame:
+    """Fetch the current four-column AMS athlete mapping.
+
+    Sandbox sources contain the already-current mapping, so their four core
+    fields are returned directly. Production sources are append-only: this
+    helper selects the latest record for each mapping identity and drops an
+    identity when its latest record is inactive.
+
+    Args:
+        source_uuid: AMS mapping data-source identifier. When omitted, read
+            ``AMS_MAPPING_UUID`` from the environment.
+        token: Bearer token passed to :func:`make_request`. Ignored in sandbox
+            mode.
+        sandbox: Force sandbox (``True``) or production (``False``) routing.
+            ``None`` resolves via :func:`csiapps.config.is_sandbox_mode`.
+        max_pages: Maximum number of production response pages to fetch.
+
+    Returns:
+        pandas.DataFrame: The current mapping with columns ``id``, ``vendor``,
+        ``vendor_profile_id``, and ``vendor_profile_name``.
+
+    Raises:
+        ValueError: If no source UUID is supplied or a record is missing a core
+            mapping field.
+        RuntimeError: If the production request fails.
+    """
+    if source_uuid is None:
+        source_uuid = os.environ.get("AMS_MAPPING_UUID", "")
+    if not isinstance(source_uuid, str) or not source_uuid.strip():
+        raise ValueError("fetch_ams_mapping: pass source_uuid or set AMS_MAPPING_UUID.")
+    source_uuid = source_uuid.strip()
+    if sandbox is None:
+        sandbox = config.is_sandbox_mode()
+
+    columns = ["id", "vendor", "vendor_profile_id", "vendor_profile_name"]
+    pages = make_request(
+        "api/warehouse/data-records",
+        query={"source_uuid": source_uuid},
+        token=token,
+        paginate=True,
+        max_pages=max_pages,
+        sandbox=sandbox,
+    )
+    records = [record for page in pages for record in (page.get("results") or [])]
+
+    rows = []
+    for position, record in enumerate(records):
+        data = record.get("data") if isinstance(record, dict) else None
+        missing = [
+            field
+            for field in columns
+            if not isinstance(data, dict)
+            or field not in data
+            or data[field] is None
+            or isinstance(data[field], (dict, list))
+        ]
+        if missing:
+            raise ValueError(
+                f"fetch_ams_mapping: record {position + 1} is missing core field(s): "
+                + ", ".join(missing)
+                + "."
+            )
+
+        row = {
+            "id": data["id"],
+            "vendor": str(data["vendor"]),
+            "vendor_profile_id": str(data["vendor_profile_id"]),
+            "vendor_profile_name": str(data["vendor_profile_name"]),
+        }
+        if not sandbox:
+            active = data.get("active")
+            if active is None or (isinstance(active, str) and active.strip().upper() in {"", "NA"}):
+                active = True
+            elif isinstance(active, bool):
+                pass
+            else:
+                active = str(active).strip().upper() not in {"FALSE", "F", "0", "NO", "N"}
+            record_id = record.get("id")
+            try:
+                numeric_id = float(record_id)
+                id_kind = 1
+            except (TypeError, ValueError):
+                numeric_id = float("-inf")
+                id_kind = 0
+            row.update(
+                _active=active,
+                _order=(
+                    str(record.get("updated_at") or ""),
+                    id_kind,
+                    numeric_id,
+                    str(record_id or ""),
+                    position,
+                ),
+            )
+        rows.append(row)
+
+    if sandbox or not rows:
+        return pd.DataFrame(rows, columns=columns)
+
+    ordered = sorted(rows, key=lambda row: row["_order"])
+    latest = {}
+    for index, row in enumerate(ordered):
+        latest[tuple(row[field] for field in columns)] = index
+    current = [
+        {field: row[field] for field in columns}
+        for index, row in enumerate(ordered)
+        if latest[tuple(row[field] for field in columns)] == index and row["_active"]
+    ]
+    return pd.DataFrame(current, columns=columns)
 
 
 def fetch_org_options(token: str | None = None, sandbox: bool | None = None) -> dict:

@@ -23,6 +23,7 @@ imported explicitly, each behind its own optional dependency:
 
 from .auth import check_secrets
 from .client import (
+    fetch_ams_mapping,
     fetch_org_options,
     fetch_profile,
     fetch_profiles,
@@ -48,6 +49,7 @@ __all__ = [
     "clear_sandbox",
     "create_profile",
     "create_sport_org",
+    "fetch_ams_mapping",
     "fetch_org_options",
     "fetch_profile",
     "fetch_profiles",

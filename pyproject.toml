@@ -14,6 +14,7 @@ dependencies = [
     "httpx>=0.27",
     "jsonschema>=4.21",
     "faker>=25",
+    "pandas>=2.0",
 ]
 
 [project.optional-dependencies]
