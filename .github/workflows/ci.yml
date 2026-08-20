@@ -129,7 +129,7 @@ jobs:
           # submodule references or docstring prose.
           offenders=$(grep -rnE '^[[:space:]]*(import|from)[[:space:]]+(shiny|flask|dash|dash_auth|werkzeug|streamlit|starlette)\b' \
             src/csiapps/ --include='*.py' \
-            | grep -vE '/(shiny|dash|streamlit)\.py:' || true)
+            | grep -vE '/(shiny|dash|streamlit|quarto)\.py:' || true)
           if [ -n "$offenders" ]; then
             echo "Web-framework import outside its framework module:"
             echo "$offenders"
