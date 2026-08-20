@@ -1,7 +1,7 @@
 [project]
 name = "csiapps"
-version = "0.4.1"
-description = "Helper functions and utilities for CSI data warehouse ingestion and Shiny, Dash, or Streamlit web applications (Python port of the csiapps R package)."
+version = "0.5.0"
+description = "Helper functions for CSI data warehouse ingestion, web applications, and authenticated interactive Quarto documents."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
@@ -23,6 +23,9 @@ dependencies = [
 # sandbox, shared chrome) depends on none of them. See
 # https://csiontario.github.io/csiapps/migrating/.
 shiny = [
+    "shiny>=1.0",
+]
+quarto = [
     "shiny>=1.0",
 ]
 dash = [
@@ -49,6 +52,7 @@ dev = [
 # dash-tests --no-group streamlit-tests`). Framework test suites skip themselves
 # when their extra is absent, so the core-only install runs the core suite cleanly.
 shiny-tests = ["csiapps[shiny]"]
+quarto-tests = ["csiapps[quarto]"]
 dash-tests = ["csiapps[dash]"]
 streamlit-tests = ["csiapps[streamlit]"]
 
