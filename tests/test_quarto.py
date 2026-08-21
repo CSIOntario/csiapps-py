@@ -1,8 +1,7 @@
-"""Serialization and setup boundaries for csiapps.quarto."""
+"""Setup boundaries for csiapps.quarto."""
 
-from datetime import date, datetime, timezone
+import asyncio
 
-import pandas as pd
 import pytest
 
 pytest.importorskip("shiny", reason="csiapps[quarto] not installed")
@@ -10,44 +9,7 @@ pytest.importorskip("shiny", reason="csiapps[quarto] not installed")
 from csiapps import quarto  # noqa: E402
 
 
-def test_datasets_json_preserves_complete_typed_records():
-    payload = quarto._datasets_json(
-        {
-            "athletes": pd.DataFrame(
-                {
-                    "id": [1, 2**60],
-                    "name": ["Ada", "Zoë"],
-                    "score": [float("nan"), 9.5],
-                    "date": [date(2026, 8, 19), date(2026, 8, 20)],
-                    "seen": [datetime(2026, 8, 20, tzinfo=timezone.utc)] * 2,
-                }
-            )
-        }
-    )
-
-    assert '"id":"1152921504606846976"' in payload
-    assert '"name":"Zoë"' in payload
-    assert '"score":null' in payload
-    assert '"date":"2026-08-19"' in payload
-    assert '"seen":"2026-08-20T00:00:00+00:00"' in payload
-
-
-@pytest.mark.parametrize(
-    "datasets, message",
-    [
-        ([], "mapping"),
-        ({"athletes": [1, 2]}, "DataFrame or list of records"),
-        ({"": []}, "non-empty strings"),
-    ],
-)
-def test_datasets_json_rejects_ambiguous_registries(datasets, message):
-    with pytest.raises((TypeError, ValueError), match=message):
-        quarto._datasets_json(datasets)
-
-
-def test_quarto_setup_requires_callable_and_active_session(monkeypatch):
-    with pytest.raises(TypeError, match="zero-argument callable"):
-        quarto.quarto_setup([])
+def test_quarto_setup_requires_active_session(monkeypatch):
     monkeypatch.setattr(quarto, "_get_current_session", lambda: None)
     with pytest.raises(RuntimeError, match="active Shiny session"):
         quarto.quarto_setup()
@@ -57,3 +19,53 @@ def test_quarto_setup_is_a_noop_during_quarto_render(monkeypatch):
     monkeypatch.setattr(quarto, "_get_current_session", lambda: None)
     monkeypatch.setenv("QUARTO_DOCUMENT_PATH", ".")
     assert quarto.quarto_setup() is None
+
+
+def test_quarto_setup_reveals_sandbox_without_a_token(monkeypatch, tmp_path):
+    body = tmp_path / "body.html"
+    body.write_text("<main>Local sandbox report</main>", encoding="utf-8")
+    sent = []
+
+    class Value:
+        def __init__(self, value):
+            self.value = value
+
+        def __call__(self):
+            return self.value
+
+        def set(self, value):
+            self.value = value
+
+    class Session:
+        async def send_custom_message(self, name, payload):
+            sent.append((name, payload))
+
+    session = Session()
+    monkeypatch.setattr(quarto, "_get_current_session", lambda: session)
+    monkeypatch.setattr(quarto.reactive, "value", Value)
+    monkeypatch.setattr(quarto.reactive, "effect", lambda fn: (asyncio.run(fn()), fn)[1])
+    monkeypatch.setattr(
+        quarto,
+        "server_wrapper",
+        lambda initialize, sandbox: (
+            lambda input, output, current: initialize(input, output, current)
+        ),
+    )
+    monkeypatch.setattr(
+        quarto.client,
+        "token_ready",
+        lambda: pytest.fail("sandbox must not request a CSI token"),
+    )
+
+    quarto.quarto_setup(
+        protected_body=body,
+        config_file=tmp_path / "missing.json",
+        sandbox=True,
+    )
+
+    assert sent == [
+        (
+            "csiapps_quarto_init",
+            {"body": "<main>Local sandbox report</main>", "title": None},
+        )
+    ]
