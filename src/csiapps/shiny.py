@@ -236,7 +236,9 @@ def ui_wrapper(*args: TagChild, sandbox: bool | None = None) -> Tag:
 
 
 def server_wrapper(
-    app_specific_logic: Callable, sandbox: bool | None = None
+    app_specific_logic: Callable,
+    sandbox: bool | None = None,
+    pause_on_logout: bool = False,
 ) -> Callable:
     """Wrap an app's server function with CSIAPPS authentication.
 
@@ -255,6 +257,10 @@ def server_wrapper(
         sandbox: Force sandbox (``True``) or production (``False``) auth
             behaviour. ``None`` (the default) resolves via
             [`is_sandbox_mode`][csiapps.config.is_sandbox_mode].
+        pause_on_logout: Clear the session without immediately authenticating
+            again. Quarto uses this to prevent an existing CSI SSO session from
+            signing the viewer straight back in. Defaults to ``False`` for
+            existing Shiny applications.
 
     Returns:
         Callable: A server function to hand to Shiny's ``App(app_ui, server)``.
@@ -282,6 +288,7 @@ def server_wrapper(
     def server(input, output, session):
         user_token = reactive.value(None)
         userinfo = reactive.value(None)
+        logged_out = reactive.value(False)
 
         if sandbox:
             # Simulate the redirect: seed the token from the environment and hand
@@ -291,6 +298,8 @@ def server_wrapper(
 
             @reactive.effect
             async def _oauth():
+                if logged_out():
+                    return
                 qs = parse_qs(session.clientdata.url_search().lstrip("?"))
                 code = qs.get("code", [None])[0]
                 state = qs.get("state", [None])[0]
@@ -368,6 +377,8 @@ def server_wrapper(
 
         @render.ui
         def auth_status():
+            if logged_out():
+                return ui.tags.p("Signed out. Select Sign in to continue.")
             tok = user_token()
             if tok is None:
                 return ui.tags.p("Redirecting to CSIAPPS for authentication...")
@@ -384,7 +395,11 @@ def server_wrapper(
         async def _logout():
             userinfo.set(None)
             set_session_token(session, None)
-            if sandbox:
+            if pause_on_logout:
+                logged_out.set(True)
+                user_token.set(None)
+                await session.send_custom_message("csiapps_quarto_signed_out", {})
+            elif sandbox:
                 user_token.set(auth.seed_sandbox_token())
             else:
                 user_token.set(None)

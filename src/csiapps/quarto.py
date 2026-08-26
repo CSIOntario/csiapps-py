@@ -69,7 +69,11 @@ def quarto_setup(
     except ImportError as error:  # pragma: no cover - Shiny controls this module
         raise RuntimeError("quarto_setup() requires a Shiny Express document") from error
 
-    server_wrapper(initialize, sandbox=sandbox)(input, None, session)
+    server_wrapper(
+        initialize,
+        sandbox=sandbox,
+        pause_on_logout=True,
+    )(input, None, session)
 
 
 __all__ = ["quarto_setup"]

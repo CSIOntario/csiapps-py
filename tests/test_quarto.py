@@ -44,12 +44,15 @@ def test_quarto_setup_reveals_sandbox_without_a_token(monkeypatch, tmp_path):
     monkeypatch.setattr(quarto, "_get_current_session", lambda: session)
     monkeypatch.setattr(quarto.reactive, "value", Value)
     monkeypatch.setattr(quarto.reactive, "effect", lambda fn: (asyncio.run(fn()), fn)[1])
+
+    def fake_wrapper(initialize, sandbox, pause_on_logout):
+        assert pause_on_logout is True
+        return lambda input, output, current: initialize(input, output, current)
+
     monkeypatch.setattr(
         quarto,
         "server_wrapper",
-        lambda initialize, sandbox: (
-            lambda input, output, current: initialize(input, output, current)
-        ),
+        fake_wrapper,
     )
     monkeypatch.setattr(
         quarto.client,
