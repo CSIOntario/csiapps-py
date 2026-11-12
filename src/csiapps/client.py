@@ -15,7 +15,7 @@ sandbox layer.
 
 import os
 import time
-from urllib.parse import quote
+from urllib.parse import quote, urljoin
 
 import httpx
 import pandas as pd
@@ -30,11 +30,15 @@ from . import config
 # ingestion script registers none and falls back to the environment. This is
 # what keeps client.py free of any shiny/flask import.
 #
-# An adapter is any object with two methods:
+# Adapters distinguish inactive contexts (None) from signed-out sessions (""),
+# and invalidate only the current session when its token is rejected.
+# An adapter implements:
 #   read_token() -> str | None
 #       The token for the current context if this framework is active, else
 #       None (a Shiny adapter returns None with no active session, a Flask
 #       adapter returns None outside a request context).
+#   invalidate_token(token) -> bool
+#       Clear matching credentials; return whether this session was invalidated.
 #   handle_missing_token() -> bool
 #       Called by the auth gate when no token was found. Return True if handled
 #       (e.g. Shiny quietly cancels a reactive), False to let the core raise.
@@ -54,17 +58,12 @@ _RETRY_STATUSES = {429, 500, 502, 503, 504}
 def current_token() -> str:
     """Resolve the access token: framework adapters first, then env var.
 
-    Each registered adapter is asked in turn and the first non-empty token wins.
-    Adapters are inert outside their own framework's active context, so their
-    order does not matter in practice -- no process is both a live Shiny session
-    and a Flask request at once. When no adapter yields a token, the
-    ``CSIAPPS_ACCESS_TOKEN`` environment variable is the single-token
-    development fallback; it lives in the core so pure ingestion works with no
-    web framework installed, and a per-user token always outranks it.
+    The first active framework adapter owns resolution, even when signed out.
+    Only scripts outside every framework context use CSIAPPS_ACCESS_TOKEN.
     """
     for adapter in _token_adapters:
         tok = adapter.read_token()
-        if tok:
+        if tok is not None:
             return tok
     return os.environ.get("CSIAPPS_ACCESS_TOKEN", "")
 
@@ -108,41 +107,58 @@ def _auth_gate(what: str):
     )
 
 
-def _perform(method, url, *, params=None, json=None, headers=None, timeout=20, max_tries=3):
-    # Minimal retry on transient statuses; connection retries are left to httpx.
-    # ponytail: fixed 3-try exponential backoff capped at 10s, matching the R
-    # req_retry(max_tries = 3, max_seconds = 10). Swap for tenacity only if the
-    # retry policy needs to grow.
+class AuthenticationError(RuntimeError):
+    """An API rejected credentials; session_expired identifies a cleared session."""
+
+    def __init__(self, message, *, session_expired=False):
+        super().__init__(message)
+        self.session_expired = session_expired
+
+
+def _invalidate_token(token):
+    for adapter in _token_adapters:
+        if adapter.read_token() is not None:
+            return adapter.invalidate_token(token)
+    return False
+
+
+def _positive_integer(value, name):
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f"{name} must be a positive integer")
+
+
+def _perform(method, url, *, params=None, json=None, headers=None, timeout=20,
+             max_tries=3, is_transient=None):
     delay = 0.5
-    resp = None
     for attempt in range(max_tries):
         resp = httpx.request(
             method, url, params=params, json=json, headers=headers, timeout=timeout,
             follow_redirects=True,
         )
-        if resp.status_code not in _RETRY_STATUSES or attempt == max_tries - 1:
+        # Authentication failures must reach session invalidation immediately.
+        if resp.status_code == 401 or attempt == max_tries - 1:
+            return resp
+        retry = (resp.status_code in _RETRY_STATUSES if is_transient is None
+                 else is_transient(resp))
+        if not retry:
             return resp
         time.sleep(min(delay, 10))
         delay *= 2
-    return resp
 
 
 def _parse_response(resp, *, endpoint="", method="GET", query=None, verbose=False):
     status = resp.status_code
     txt = resp.text
-
-    if len(txt) == 0:
+    if status >= 400:
+        error = AuthenticationError if status == 401 else RuntimeError
+        raise error(f"API request failed ({status}): {txt}")
+    if not txt:
         return []
-
     if verbose:
         print(f"{method} request to {endpoint} returned status {status}")
         if query:
             print("  params:", ", ".join(f"{k}={v}" for k, v in query.items()))
         print("  response:\n", txt)
-
-    if status >= 400:
-        raise RuntimeError(f"API request failed ({status}): {txt}")
-
     try:
         return resp.json()
     except ValueError as e:
@@ -150,36 +166,67 @@ def _parse_response(resp, *, endpoint="", method="GET", query=None, verbose=Fals
 
 
 def _http_request(
-    endpoint, method, body, query, headers, token, timeout, verbose, paginate, max_pages
+    endpoint, method, body, query, headers, token, timeout, verbose, paginate, max_pages,
+    retry_max_tries=3, retry_is_transient=None,
 ):
     if not token:
         _auth_gate("make_request")
-
     url = config.site_url().rstrip("/") + "/" + endpoint.lstrip("/")
-    req_headers = {"Authorization": f"Bearer {token}"}
-    if headers:
-        req_headers.update(headers)
-
-    if paginate:
-        pages = []
-        next_url = url
-        params = query
-        for _ in range(max_pages):
-            resp = _perform(
-                method, next_url, params=params, json=body, headers=req_headers, timeout=timeout
-            )
-            page = _parse_response(
-                resp, endpoint=endpoint, method=method, query=params, verbose=verbose
-            )
-            pages.append(page)
-            next_url = page.get("next") if isinstance(page, dict) else None
-            params = None  # `next` already carries its query
-            if not next_url:
+    req_headers = httpx.Headers({"Authorization": f"Bearer {token}"})
+    req_headers.update(headers or {})
+    # Compare the credentials actually sent, including a caller's header override.
+    bearer = req_headers.get("Authorization", "")
+    sent_token = bearer[7:] if bearer.lower().startswith("bearer ") else ""
+    pages, seen = [], set()
+    params = query
+    offset = int(query.get("offset", 0)) if paginate else 0
+    while True:
+        request_url = str(httpx.Request(method, url, params=params).url)
+        if request_url in seen:
+            raise RuntimeError("Pagination repeated a page URL before completion.")
+        seen.add(request_url)
+        resp = _perform(method, url, params=params, json=body, headers=req_headers,
+                        timeout=timeout, max_tries=retry_max_tries,
+                        is_transient=retry_is_transient)
+        try:
+            page = _parse_response(resp, endpoint=endpoint, method=method,
+                                   query=params, verbose=verbose)
+        except AuthenticationError as error:
+            error.session_expired = bool(sent_token and _invalidate_token(sent_token))
+            raise
+        if not paginate:
+            return page
+        pages.append(page)
+        if not isinstance(page, dict):
+            raise RuntimeError("Pagination expected a JSON object containing results.")
+        results = page.get("results")
+        next_url = page.get("next")
+        if results == [] and (next_url or (page.get("count") or 0) > offset):
+            raise RuntimeError("Pagination ended before all records were returned.")
+        if next_url:
+            url = urljoin(request_url, next_url)
+            # Never forward bearer credentials to another origin through a next link.
+            previous, following = httpx.URL(request_url), httpx.URL(url)
+            if (previous.scheme, previous.host, previous.port) != (
+                following.scheme, following.host, following.port
+            ):
+                raise RuntimeError("Pagination next link points to another origin.")
+            params = None
+            offset = int(following.params.get("offset", offset + len(results or [])))
+        elif page.get("count") is not None and isinstance(results, list):
+            offset += len(results)
+            if offset >= page["count"]:
                 break
-        return pages
-
-    resp = _perform(method, url, params=query, json=body, headers=req_headers, timeout=timeout)
-    return _parse_response(resp, endpoint=endpoint, method=method, query=query, verbose=verbose)
+            if not results:
+                raise RuntimeError("Pagination ended before all records were returned.")
+            # Keep all query parameters, including repeated subject values.
+            url = str(httpx.URL(request_url).copy_set_param("offset", offset))
+            params = None
+        else:
+            break
+        if len(pages) >= max_pages:
+            raise RuntimeError("Pagination exceeds max_pages; increase it to retrieve all records.")
+    return pages
 
 
 def make_request(
@@ -194,6 +241,9 @@ def make_request(
     paginate: bool = False,
     max_pages: int = 50,
     sandbox: bool | None = None,
+    *,
+    retry_max_tries: int = 3,
+    retry_is_transient=None,
 ) -> dict | list:
     """Make an authenticated request to a CSIAPPS warehouse endpoint.
 
@@ -209,19 +259,24 @@ def make_request(
         method: HTTP method, e.g. ``"GET"`` or ``"POST"``. Defaults to ``"GET"``.
         body: JSON-serialisable request body for write methods. ``None`` sends no
             body.
-        query: Query-string parameters as a dict. ``None`` is treated as ``{}``.
+        query: Query-string parameters as a dict. List values produce repeated
+            parameters (e.g. ``{"subject": [1, 2]}``). ``None`` means ``{}``.
         headers: Extra request headers merged over the ``Authorization`` header.
             Ignored in sandbox mode.
         token: Bearer token to authenticate with. When omitted it is resolved
-            per-session and then from the ``CSIAPPS_ACCESS_TOKEN`` environment
-            variable (see the `current_token` resolver).
+            from the active session, or from ``CSIAPPS_ACCESS_TOKEN`` only
+            outside a browser session. Explicit tokens remain supported.
         timeout: Per-request timeout in seconds. Defaults to ``20``.
         verbose: If ``True``, print the method, endpoint, params, and raw
             response body for debugging. Defaults to ``False``.
-        paginate: If ``True``, follow the response's ``next`` links and return a
-            list of pages rather than a single response. Defaults to ``False``.
+        paginate: Follow ``next`` links, or count/offset when links are absent
+            or null. Returns a list of pages. Defaults to ``False``.
         max_pages: Upper bound on pages fetched when ``paginate`` is ``True``,
-            guarding against an unbounded loop. Defaults to ``50``.
+            raising an error if more results remain. Defaults to ``50``.
+        retry_max_tries: Attempts per page; defaults to 3. Use 1 for writes
+            that must not be retried automatically.
+        retry_is_transient: Optional predicate accepting an httpx.Response.
+            None preserves the default status policy. A 401 is never retried.
         sandbox: Force sandbox (``True``) or production (``False``) routing.
             ``None`` (the default) resolves via
             [`is_sandbox_mode`][csiapps.config.is_sandbox_mode].
@@ -256,6 +311,11 @@ def make_request(
         (429/500/502/503/504) are retried up to three times with exponential
         backoff.
     """
+    _positive_integer(retry_max_tries, "retry_max_tries")
+    if paginate:
+        _positive_integer(max_pages, "max_pages")
+    if retry_is_transient is not None and not callable(retry_is_transient):
+        raise ValueError("retry_is_transient must be callable or None")
     if query is None:
         query = {}
     if headers is None:
@@ -279,7 +339,8 @@ def make_request(
         token = current_token()
 
     return _http_request(
-        endpoint, method, body, query, headers, token, timeout, verbose, paginate, max_pages
+        endpoint, method, body, query, headers, token, timeout, verbose, paginate, max_pages,
+        retry_max_tries, retry_is_transient,
     )
 
 
@@ -407,7 +468,7 @@ def fetch_org_options(token: str | None = None, sandbox: bool | None = None) -> 
 
     Args:
         token: Bearer token to authenticate with. When omitted it is resolved
-            per-session and then from ``CSIAPPS_ACCESS_TOKEN``.
+            from the active session; outside a session, from ``CSIAPPS_ACCESS_TOKEN``.
         sandbox: Force sandbox (``True``) or production (``False``) routing.
             ``None`` (the default) resolves via
             [`is_sandbox_mode`][csiapps.config.is_sandbox_mode].
@@ -444,22 +505,9 @@ def fetch_org_options(token: str | None = None, sandbox: bool | None = None) -> 
 
         return _sb._sandbox_org_options()
 
-    if not token:
-        token = current_token()
-    if not token:
-        _auth_gate("fetch_org_options")
-
-    url = config.site_url().rstrip("/") + config.SPORT_ORG_ENDPOINT
-    resp = _perform(
-        "GET",
-        url,
-        params={"limit": 1000},
-        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-    )
-    if resp.status_code >= 400:
-        raise RuntimeError(f"fetch_org_options failed ({resp.status_code}): {resp.text}")
-
-    items = resp.json()
+    items = make_request(config.SPORT_ORG_ENDPOINT, token=token,
+                         query={"limit": 1000}, headers={"Accept": "application/json"},
+                         sandbox=False)
     if isinstance(items, dict) and items.get("results") is not None:
         return {it.get("id"): it.get("name") for it in items["results"]}
     if isinstance(items, list):
@@ -482,7 +530,7 @@ def fetch_profiles(
 
     Args:
         token: Bearer token to authenticate with. When omitted it is resolved
-            per-session and then from ``CSIAPPS_ACCESS_TOKEN``.
+            from the active session; outside a session, from ``CSIAPPS_ACCESS_TOKEN``.
         filters: Query parameters narrowing the result, e.g.
             ``{"sport_org_id": 42}``. In sandbox mode only ``sport_org_id`` is
             honoured. ``None`` fetches all accessible profiles.
@@ -500,10 +548,8 @@ def fetch_profiles(
         RuntimeError: If no token is available in production mode, or the API
             responds with a status of 400 or higher.
 
-    Warns:
-        UserWarning: If ``max_pages`` is reached while the server still
-            advertises more pages; the result may be truncated. Pass a larger
-            ``max_pages`` to fetch the rest.
+    Incomplete results (a page limit, repeated URL, or premature empty page)
+    raise RuntimeError; partial profiles are never returned as a success.
 
     Example:
         ```python
@@ -515,7 +561,7 @@ def fetch_profiles(
         ```
 
     Note:
-        Pagination terminates if the server ever repeats a ``next`` URL, so a
+        Pagination raises if the server ever repeats a ``next`` URL, so a
         misbehaving or hostile server cannot hang the app in an unbounded loop
         with unbounded memory growth.
     """
@@ -528,44 +574,11 @@ def fetch_profiles(
 
         return _sb._sandbox_profiles(filters.get("sport_org_id"))
 
-    if not token:
-        token = current_token()
-    if not token:
-        _auth_gate("fetch_profiles")
-
-    url = config.site_url().rstrip("/") + config.PROFILE_ENDPOINT
-    params = {**filters, "limit": 100, "offset": 0}
-    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-
-    out = []
-    next_url = url
-    seen = set()
-    for _ in range(max_pages):
-        if next_url in seen:  # server cycled `next` back to a page we already fetched
-            break
-        seen.add(next_url)
-        resp = _perform("GET", next_url, params=params, headers=headers)
-        if resp.status_code >= 400:
-            raise RuntimeError(f"fetch_profiles failed ({resp.status_code}): {resp.text}")
-        payload = resp.json()
-        out.extend(payload.get("results") or [])
-        next_url = payload.get("next")
-        params = None  # `next` already carries its query
-        if not next_url:
-            break
-    else:
-        # Loop hit max_pages with more pages still advertised. Warn loudly rather
-        # than silently truncate, so a genuinely large result is never dropped
-        # without notice (raise max_pages to fetch the rest).
-        if next_url:
-            import warnings
-
-            warnings.warn(
-                f"fetch_profiles: stopped after max_pages={max_pages}; results may be "
-                f"truncated. Pass a larger max_pages to fetch all profiles.",
-                stacklevel=2,
-            )
-    return out
+    pages = make_request(config.PROFILE_ENDPOINT, token=token,
+                         query={**filters, "limit": 100, "offset": 0},
+                         headers={"Accept": "application/json"}, paginate=True,
+                         max_pages=max_pages, sandbox=False)
+    return [profile for page in pages for profile in (page.get("results") or [])]
 
 
 def fetch_profile(
@@ -580,7 +593,7 @@ def fetch_profile(
             being placed in the request path, so an unusual value cannot alter
             the URL.
         token: Bearer token to authenticate with. When omitted it is resolved
-            per-session and then from ``CSIAPPS_ACCESS_TOKEN``.
+            from the active session; outside a session, from ``CSIAPPS_ACCESS_TOKEN``.
         sandbox: Force sandbox (``True``) or production (``False``) routing.
             ``None`` (the default) resolves via
             [`is_sandbox_mode`][csiapps.config.is_sandbox_mode].
@@ -614,22 +627,9 @@ def fetch_profile(
 
         return _sb._sandbox_profile(profile_id)
 
-    if not token:
-        token = current_token()
-    if not token:
-        _auth_gate("fetch_profile")
-
-    # URL-encode the id so an unusual value can't alter the request path.
-    # Keep the trailing slash: the DRF detail route is `.../profile/<id>/`, and
-    # a slash-less URL 301-redirects (empty body) on APPEND_SLASH backends.
     enc_id = quote(str(profile_id), safe="")
-    url = config.site_url().rstrip("/") + config.PROFILE_ENDPOINT + enc_id + "/"
-    resp = _perform(
-        "GET", url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"}
-    )
-    if resp.status_code >= 400:
-        raise RuntimeError(f"fetch_profile failed ({resp.status_code}): {resp.text}")
-    return resp.json()
+    return make_request(config.PROFILE_ENDPOINT + enc_id + "/", token=token,
+                        headers={"Accept": "application/json"}, sandbox=False)
 
 
 # fetch_profiles() returns deeply nested dicts; passing them straight to a Shiny

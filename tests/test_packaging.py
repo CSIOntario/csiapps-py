@@ -45,6 +45,7 @@ def test_public_api():
     # they live in explicit framework submodules, imported
     # explicitly, so importing csiapps costs no web framework.
     assert set(csiapps.__all__) == {
+        "AuthenticationError",
         "__version__",
         "browse_sandbox",
         "check_secrets",

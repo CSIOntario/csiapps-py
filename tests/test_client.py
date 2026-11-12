@@ -135,9 +135,8 @@ def test_fetch_profiles_bounds_runaway_pagination():
         )
 
     respx.get(url__startswith=url).mock(side_effect=_never_ending)
-    with pytest.warns(UserWarning, match="truncated"):
-        profiles = fetch_profiles(token="tok", sandbox=False, max_pages=5)
-    assert len(profiles) == 5
+    with pytest.raises(RuntimeError, match="max_pages"):
+        fetch_profiles(token="tok", sandbox=False, max_pages=5)
     assert call_count["n"] == 5
 
 
@@ -154,9 +153,8 @@ def test_fetch_profiles_stops_on_cycled_next():
         return httpx.Response(200, json={"results": [{"id": 1}], "next": page2})
 
     respx.get(url__startswith=url).mock(side_effect=_cycle)
-    profiles = fetch_profiles(token="tok", sandbox=False, max_pages=50)
-    # page1 -> id 1 (next=page2), page2 -> id 2 (next=page2, already seen -> stop)
-    assert [p["id"] for p in profiles] == [1, 2]
+    with pytest.raises(RuntimeError, match="repeated"):
+        fetch_profiles(token="tok", sandbox=False, max_pages=50)
 
 
 # ---- fetch_profile ----

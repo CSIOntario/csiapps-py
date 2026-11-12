@@ -100,7 +100,7 @@ def test_session_token_wins_over_env(monkeypatch):
     csishiny.set_session_token(sess, "sesstok")
     assert client.current_token() == "sesstok"
     csishiny.set_session_token(sess, None)
-    assert client.current_token() == "envtok"
+    assert client.current_token() == ""
 
 
 def test_gates_quietly_and_refires_on_login(monkeypatch):

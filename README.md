@@ -196,3 +196,31 @@ pushed. To preview, clone it alongside this one and run `mkdocs serve` there.
 
 Shipping a change to the package? Follow
 [Releasing csiapps](https://csiontario.github.io/csiapps/releasing/).
+
+
+## Unreleased: authentication and request compatibility
+
+Browser sessions now use only their own access token. `CSIAPPS_ACCESS_TOKEN`
+remains available to command-line scripts and explicit sandbox identity seeding;
+it is not a production browser-session fallback. A 401 clears only the session
+whose credentials were rejected. A 403 does not sign the user out.
+
+Shiny, Dash, Streamlit and Quarto provide sign-in recovery after rejection.
+Public OAuth PKCE clients may omit `CSIAPPS_CLIENT_SECRET`; Dash and Streamlit
+still require their separate `CSIAPPS_SECRET_KEY`. Quarto documents need the
+updated csiapps extension for callback-query cleanup.
+
+`make_request(..., paginate=True)` follows next links or count/offset responses.
+An incomplete result, repeated page URL, or exhausted page limit raises an error;
+`fetch_profiles()` no longer returns a partial list with a warning. Repeated
+query parameters use native Python list values: `query={"subject": [1, 2]}`.
+
+Use `retry_max_tries=1` for writes that must not be retried automatically.
+The default remains three attempts; `retry_is_transient` optionally accepts an
+`httpx.Response` predicate. Authentication failures are never retried. Empty
+successful responses still return `[]`; empty HTTP error responses now raise.
+`AuthenticationError` is a `RuntimeError` subclass and its `session_expired`
+attribute indicates whether the current session was invalidated.
+
+See [LOCAL_VALIDATION.md](LOCAL_VALIDATION.md) for the four-framework local gate.
+This working copy has not been versioned or published as a new release.

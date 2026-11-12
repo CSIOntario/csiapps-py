@@ -23,6 +23,7 @@ imported explicitly, each behind its own optional dependency:
 
 from .auth import check_secrets
 from .client import (
+    AuthenticationError,
     fetch_ams_mapping,
     fetch_org_options,
     fetch_profile,
@@ -40,9 +41,10 @@ from .sandbox import (
     register_sandbox_schema,
 )
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"
 
 __all__ = [
+    "AuthenticationError",
     "__version__",
     "browse_sandbox",
     "check_secrets",

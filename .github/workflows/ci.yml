@@ -73,6 +73,24 @@ jobs:
       - name: Test
         run: uv run --no-sync pytest
 
+  quarto:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: Install Quarto extra only
+        run: uv sync --no-default-groups --group dev --group quarto-tests
+      - name: Assert the Quarto boundary
+        run: |
+          uv run --no-sync python -c "
+          import importlib.util as u
+          import csiapps.quarto
+          for mod in ('dash', 'dash_auth', 'streamlit'):
+              assert u.find_spec(mod) is None, mod + ' unexpectedly installed'
+          "
+      - name: Test
+        run: uv run --no-sync pytest
+
   # dash: install [dash] only. Other frameworks must be absent.
   dash:
     runs-on: ubuntu-latest
@@ -182,7 +200,7 @@ jobs:
 
   dispatch-canaries:
     if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
-    needs: [core-only, shiny, dash, streamlit, import-guard, build]
+    needs: [core-only, shiny, quarto, dash, streamlit, import-guard, build]
     runs-on: ubuntu-latest
     env:
       CANARY_TOKEN: ${{ secrets.CSIAPPS_CANARY_TOKEN }}

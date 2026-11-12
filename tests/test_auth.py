@@ -49,7 +49,7 @@ def test_check_secrets_production_ok(monkeypatch):
 def test_check_secrets_production_requires_client_credentials(monkeypatch):
     config.set_sandbox_mode(False)
     monkeypatch.setenv("CSIAPPS_REDIRECT_URI", "https://apps.csiontario.ca/callback")
-    with pytest.raises(ValueError, match="CSIAPPS_CLIENT_ID, CSIAPPS_CLIENT_SECRET"):
+    with pytest.raises(ValueError, match="CSIAPPS_CLIENT_ID"):
         auth.check_secrets()
 
 

@@ -97,14 +97,24 @@ class _ShinyTokenAdapter:
         else:
             with reactive.isolate():
                 tok = rv()
-        return tok or None
+        return tok or ""
+
+    def invalidate_token(self, token) -> bool:
+        session = _get_current_session()
+        if session is None:
+            return False
+        with reactive.isolate():
+            if _token_rv(session)() != token:
+                return False
+        set_session_token(session, None)
+        return True
 
     def handle_missing_token(self) -> bool:
         # Inside a reactive context a missing token is the normal pre-login
         # state, so cancel the computation with req(False); because read_token
         # took a dependency on the token's reactive value, it re-runs once login
         # completes. Outside a reactive context let the core raise loudly.
-        if _in_reactive_context():
+        if _get_current_session() is not None and _in_reactive_context():
             req(False)
         return False
 
@@ -116,7 +126,23 @@ Shiny.addCustomMessageHandler('csip_redirect', function(url) {
   if (url && typeof url === 'string') { window.top.location.href = url; }
 });
 Shiny.addCustomMessageHandler('csip_reset', function(x) {
-  window.location.href = window.location.pathname;
+  const url = new URL(window.location.href);
+  ['code', 'state', 'error', 'error_description'].forEach(k => url.searchParams.delete(k));
+  window.location.href = url.href;
+});
+Shiny.addCustomMessageHandler('csiapps_clean_query', function(x) {
+  const url = new URL(window.location.href);
+  ['code', 'state', 'error', 'error_description'].forEach(k => url.searchParams.delete(k));
+  window.history.replaceState(null, '', url.href);
+});
+Shiny.addCustomMessageHandler('csiapps_auth', function(x) {
+  const body = document.getElementById('csiapps-app-body');
+  if (!body) return;
+  body.hidden = !x.authenticated;
+  if (x.expired) {
+    Shiny.unbindAll(body);
+    body.replaceChildren();
+  }
 });
 """
 
@@ -224,7 +250,7 @@ def ui_wrapper(*args: TagChild, sandbox: bool | None = None) -> Tag:
     children.append(
         ui.div(
             ui.output_ui("auth_status"),
-            *args,
+            ui.div(*args, id="csiapps-app-body", hidden=not sandbox),
             style="padding-bottom: 80px;",
         )
     )
@@ -298,7 +324,7 @@ def server_wrapper(
 
             @reactive.effect
             async def _oauth():
-                if logged_out():
+                if logged_out() or user_token() is not None:
                     return
                 qs = parse_qs(session.clientdata.url_search().lstrip("?"))
                 code = qs.get("code", [None])[0]
@@ -310,7 +336,7 @@ def server_wrapper(
                         {"error": err, "error_description": qs.get("error_description", [None])[0]}
                     )
                     set_session_token(session, None)
-                    await session.send_custom_message("csip_reset", {})
+                    return
 
                 # 1) no code + no token -> redirect to CSI
                 if code is None and user_token() is None:
@@ -332,13 +358,15 @@ def server_wrapper(
 
                 # 2) have code but no token yet -> exchange
                 if code is not None and user_token() is None:
-                    verifier = auth.pkce_state_decode(state).get("v") if state else None
-                    # exchange_code_for_token does a *blocking* httpx.post; run it
-                    # off the event loop so a slow token endpoint can't stall every
-                    # other session (a Python-only concern -- R has no shared loop).
-                    tok = await asyncio.to_thread(
-                        auth.exchange_code_for_token, code, verifier
-                    )
+                    try:
+                        verifier = auth.pkce_state_decode(state).get("v") if state else None
+                        if not verifier:
+                            raise ValueError("Missing PKCE verifier")
+                        tok = await asyncio.to_thread(auth.exchange_code_for_token, code, verifier)
+                        if not isinstance(tok, dict) or not tok.get("access_token"):
+                            tok = {"error": "token_exchange_failed"}
+                    except Exception:
+                        tok = {"error": "token_exchange_failed"}
                     user_token.set(tok)
 
         # Shared consumer (production + sandbox): store the token per-session and
@@ -350,7 +378,6 @@ def server_wrapper(
             set_session_token(session, None)
 
             if tok is None or tok.get("error"):
-                await session.send_custom_message("csip_reset", {})
                 return
 
             access_token = tok.get("access_token")
@@ -358,6 +385,8 @@ def server_wrapper(
                 return
 
             set_session_token(session, access_token)
+            if not sandbox:
+                await session.send_custom_message("csiapps_clean_query", {})
 
             userinfo_url = config.userinfo_url()
             if userinfo_url:
@@ -370,20 +399,50 @@ def server_wrapper(
                         headers={"Authorization": f"Bearer {access_token}"},
                         follow_redirects=True,
                     )
+                    if resp.status_code == 401:
+                        _ShinyTokenAdapter().invalidate_token(access_token)
+                        return
                     resp.raise_for_status()
-                    userinfo.set(resp.json())
+                    with reactive.isolate():
+                        if _token_rv(session)() == access_token:
+                            userinfo.set(resp.json())
                 except Exception as e:  # a stale/expired token degrades gracefully
                     ui.notification_show(f"Error loading user info: {e}", type="error")
+
+        @reactive.effect
+        async def _auth_changed():
+            ready = bool(_token_rv(session)())
+            with reactive.isolate():
+                tok = user_token()
+                expired = not ready and bool(tok and tok.get("access_token"))
+            if expired:
+                userinfo.set(None)
+                user_token.set({"error": "session_expired"})
+                await session.send_custom_message("csiapps_quarto_signed_out", {})
+            await session.send_custom_message(
+                "csiapps_auth", {"authenticated": ready or sandbox, "expired": expired}
+            )
+
+        @reactive.effect
+        @reactive.event(input.csiapps_sign_in, ignore_none=True)
+        async def _sign_in():
+            # Start a fresh session: callback codes and old app results cannot be reused.
+            await session.send_custom_message("csip_reset", {})
 
         @render.ui
         def auth_status():
             if logged_out():
-                return ui.tags.p("Signed out. Select Sign in to continue.")
+                return ui.TagList(ui.tags.p("Signed out. Select Sign in to continue."),
+                                  ui.input_action_button("csiapps_sign_in", "Sign in"))
             tok = user_token()
             if tok is None:
                 return ui.tags.p("Redirecting to CSIAPPS for authentication...")
             if tok.get("error"):
-                return ui.tags.p("Authentication error (see logs).")
+                message = ("Your session has expired. Please sign in again."
+                           if tok["error"] == "session_expired" else
+                           "Authentication failed. Please sign in again.")
+                return ui.TagList(ui.tags.p(message),
+                                  ui.input_action_button("csiapps_sign_in", "Sign in"))
             if tok.get("unauthenticated"):
                 return ui.tags.p(ui.HTML(chrome.UNAUTHENTICATED_TEXT))
             return ui.TagList(
@@ -396,6 +455,9 @@ def server_wrapper(
             userinfo.set(None)
             set_session_token(session, None)
             if pause_on_logout:
+                await session.send_custom_message(
+                    "csiapps_auth", {"authenticated": False, "expired": True}
+                )
                 logged_out.set(True)
                 user_token.set(None)
                 await session.send_custom_message("csiapps_quarto_signed_out", {})

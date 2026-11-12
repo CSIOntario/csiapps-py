@@ -65,7 +65,10 @@ def exchange_code_for_token(code: str, code_verifier: str | None = None) -> dict
     mirroring the R ``req_error(is_error = FALSE)`` behaviour); transport-level
     failures propagate as ``httpx`` exceptions, as they did in R.
     """
+    client_id = os.environ.get("CSIAPPS_CLIENT_ID", "")
+    secret = os.environ.get("CSIAPPS_CLIENT_SECRET", "")
     form = {
+        "client_id": client_id,
         "grant_type": "authorization_code",
         "code": code,
         "redirect_uri": os.environ.get("CSIAPPS_REDIRECT_URI", ""),
@@ -76,10 +79,7 @@ def exchange_code_for_token(code: str, code_verifier: str | None = None) -> dict
 
     resp = httpx.post(
         config.token_url(),
-        auth=(
-            os.environ.get("CSIAPPS_CLIENT_ID", ""),
-            os.environ.get("CSIAPPS_CLIENT_SECRET", ""),
-        ),
+        auth=(client_id, secret) if secret else None,
         data=form,
     )
 
@@ -127,7 +127,7 @@ def check_secrets(verbose: bool = False, sandbox: bool | None = None) -> bool:
       simulates login and needs no client credentials). Instead the presence or
       absence of ``CSIAPPS_ACCESS_TOKEN`` is reported to stderr, and the function
       never raises.
-    - **Production mode:** the OAuth client credentials and the URLs derived
+    - **Production mode:** the OAuth client ID (a secret is optional for PKCE) and the URLs derived
       from the configured institute plus ``CSIAPPS_REDIRECT_URI`` are checked,
       and a :class:`ValueError` lists anything missing or malformed.
 
@@ -146,7 +146,7 @@ def check_secrets(verbose: bool = False, sandbox: bool | None = None) -> bool:
         a positive assurance the required configuration is present.
 
     Raises:
-        ValueError: In production mode only, if the client id or secret is
+        ValueError: In production mode only, if the client id is
             missing, or an OAuth URL does not start with ``http://`` or
             ``https://``.
 
@@ -190,7 +190,7 @@ def check_secrets(verbose: bool = False, sandbox: bool | None = None) -> bool:
     ]
     missing_credentials = [
         name
-        for name in ("CSIAPPS_CLIENT_ID", "CSIAPPS_CLIENT_SECRET")
+        for name in ("CSIAPPS_CLIENT_ID",)
         if not os.environ.get(name)
     ]
     problems = []
