@@ -43,6 +43,7 @@ def prod_env(monkeypatch):
 
 @pytest.fixture
 def streamlit_state(monkeypatch):
+    monkeypatch.setattr(csist, "get_script_run_ctx", lambda **kwargs: object())
     query = QueryParams()
     session = {}
     context = SimpleNamespace(cookies={}, url=REDIRECT)
@@ -215,7 +216,7 @@ def test_expired_session_is_removed(monkeypatch, streamlit_state):
 def test_streamlit_adapter_reads_only_session_token(streamlit_state):
     _, session, _ = streamlit_state
     adapter = csist._StreamlitTokenAdapter()
-    assert adapter.read_token() is None
+    assert adapter.read_token() == ""
     session[csist.SESSION_KEY] = {"access_token": "per-user"}
     assert adapter.read_token() == "per-user"
     assert client.current_token() == "per-user"
@@ -337,3 +338,70 @@ def test_chrome_escapes_user_info():
     assert "<script>alert(1)</script>" not in rendered
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in rendered
     assert f"?{csist.LOGOUT_PARAM}=1" in rendered
+
+
+@pytest.mark.parametrize("caught", [False, True])
+def test_rejected_api_session_reruns_and_pauses_login(monkeypatch, streamlit_state, caught):
+    import httpx
+    import respx
+    _, session, _ = streamlit_state
+    session[csist.SESSION_KEY] = {"access_token": "expired"}
+    monkeypatch.setattr(csist.st, "set_page_config", lambda **kwargs: None)
+    monkeypatch.setattr(csist.st, "html", lambda *args, **kwargs: None)
+    monkeypatch.setattr(csist, "_authenticate", lambda: session[csist.SESSION_KEY])
+    monkeypatch.setenv("CSIAPPS_ACCESS_TOKEN", "console-only")
+    def body():
+        if caught:
+            try:
+                client.make_request("api/test/", sandbox=False)
+            except client.AuthenticationError:
+                pass
+        else:
+            client.make_request("api/test/", sandbox=False)
+    with respx.mock as http:
+        http.get("https://apps.csipacific.ca/api/test/").mock(return_value=httpx.Response(401))
+        with pytest.raises(Rerun):
+            csist.page_wrapper(body, sandbox=False)
+    assert csist.SESSION_KEY not in session
+    assert session[csist.LOGIN_PAUSED_KEY]
+    assert not client.token_ready()
+
+
+def test_active_signed_out_streamlit_never_uses_environment(monkeypatch, streamlit_state):
+    monkeypatch.setenv("CSIAPPS_ACCESS_TOKEN", "console-only")
+    assert client.current_token() == ""
+    monkeypatch.setattr(csist, "get_script_run_ctx", lambda **kwargs: None)
+    assert client.current_token() == "console-only"
+
+
+def test_streamlit_invalidation_does_not_touch_another_viewer(monkeypatch, streamlit_state):
+    _, first, _ = streamlit_state
+    first[csist.SESSION_KEY] = {"access_token": "first"}
+    second = {csist.SESSION_KEY: {"access_token": "second"}}
+    assert csist._StreamlitTokenAdapter().invalidate_token("first")
+    monkeypatch.setattr(csist.st, "session_state", second)
+    assert client.current_token() == "second"
+    assert not csist._StreamlitTokenAdapter().invalidate_token("first")
+
+
+def test_public_pkce_keeps_streamlit_session_key_requirement(monkeypatch, prod_env):
+    monkeypatch.delenv("CSIAPPS_CLIENT_SECRET")
+    assert csist._require_production_config()[0] == GOOD_KEY
+    monkeypatch.delenv("CSIAPPS_SECRET_KEY")
+    with pytest.raises(ValueError, match="CSIAPPS_SECRET_KEY"):
+        csist._require_production_config()
+
+
+def test_userinfo_rejection_does_not_establish_session(monkeypatch, prod_env, streamlit_state):
+    import respx
+    query, session, context = streamlit_state
+    context.cookies[csist.COOKIE_NAME] = "browser"
+    query.update({"code": "auth-code", "state": sealed_state()})
+    monkeypatch.setattr(csist.time, "time", lambda: 1001)
+    monkeypatch.setattr(csist.auth, "exchange_code_for_token",
+                        lambda *args: {"access_token": "rejected"})
+    with respx.mock as http:
+        http.get(csist.config.userinfo_url()).respond(401)
+        assert "expired" in csist._finish_login(GOOD_KEY, REDIRECT)
+    assert csist.SESSION_KEY not in session
+    assert not query

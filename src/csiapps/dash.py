@@ -39,10 +39,19 @@ from . import auth, chrome, client, config
 
 try:
     import httpx
-    from dash import Dash, html
+    from dash import Dash, dcc, html
     from dash.development.base_component import Component
     from dash_auth.auth import Auth as _DashAuth
-    from flask import Response, has_request_context, redirect, request, session
+    from flask import (
+        Response,
+        current_app,
+        g,
+        has_request_context,
+        jsonify,
+        redirect,
+        request,
+        session,
+    )
     from werkzeug.middleware.proxy_fix import ProxyFix
 except ImportError as exc:  # pragma: no cover - exercised by the no-extra CI job
     raise ImportError(
@@ -62,6 +71,9 @@ except ImportError as exc:  # pragma: no cover - exercised by the no-extra CI jo
 AUTH_PREFIX = "/csi-auth"
 REDIRECT_ROUTE = "/redirect"
 LOGOUT_ROUTE = f"{AUTH_PREFIX}/logout"
+LOGIN_ROUTE = f"{AUTH_PREFIX}/login"
+START_ROUTE = f"{AUTH_PREFIX}/start"
+PAUSED_KEY = "csi_login_paused"
 CSS_ROUTE = f"{AUTH_PREFIX}/chrome.css"
 
 # Flask session keys. The token key is defined here (this module owns the Flask
@@ -86,11 +98,22 @@ class _FlaskTokenAdapter:
         if not has_request_context():
             return None
         try:
-            return session.get(TOKEN_KEY) or None
+            if current_app.config.get("CSIAPPS_SANDBOX"):
+                return auth.seed_sandbox_token().get("access_token", "")
+            return session.get(TOKEN_KEY) or ""
         except Exception:
             # An unreadable/tampered session cookie must not take the app down;
-            # fall through to the env var and the normal unauthenticated gate.
-            return None
+            # remain signed out, even if a process token exists.
+            return ""
+
+    def invalidate_token(self, token) -> bool:
+        if not has_request_context() or session.get(TOKEN_KEY) != token:
+            return False
+        session.pop(TOKEN_KEY, None)
+        session.pop(USER_KEY, None)
+        session[PAUSED_KEY] = "Your session has expired. Please sign in again."
+        g.csiapps_auth_expired = True
+        return True
 
     def handle_missing_token(self) -> bool:
         return False
@@ -133,8 +156,12 @@ def _load_userinfo(access_token):
             follow_redirects=True,
             timeout=20,
         )
+        if resp.status_code == 401:
+            raise client.AuthenticationError("User information request rejected credentials (401)")
         resp.raise_for_status()
         return resp.json()
+    except client.AuthenticationError:
+        raise
     except Exception:
         return None
 
@@ -207,6 +234,10 @@ class _CsiAuth(_DashAuth):
         return bool(session.get(TOKEN_KEY))
 
     def login_request(self):
+        if request.path == "/_dash-update-component":
+            return _login_navigation()
+        if session.get(PAUSED_KEY):
+            return redirect(LOGIN_ROUTE)
         pkce = auth.generate_pkce()
         # Remember where the user was headed so the redirect route can return
         # them there instead of dumping everyone on "/".
@@ -237,12 +268,53 @@ def _register_css_route(server):
         return resp
 
 
+def _login_navigation():
+    # Dash callback requests need a component update, not an HTTP redirect to HTML.
+    return jsonify(multi=True, response={}, sideUpdate={
+        "csiapps-auth-location": {"href": LOGIN_ROUTE},
+        "csiapps-app-body": {"children": []},
+    })
+
+
 def _register_auth_routes(server):
+    @server.route(LOGIN_ROUTE)
+    def _csiapps_login():
+        response = Response(
+            '<!doctype html><html><head><title>Sign in</title></head><body>'
+            '<h1>Sign in</h1><p>Your session ended or authentication failed.</p>'
+            f'<a href="{START_ROUTE}">Sign in with CSI</a></body></html>',
+            mimetype="text/html",
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @server.route(START_ROUTE)
+    def _csiapps_start():
+        session.pop(PAUSED_KEY, None)
+        return redirect("/")
+
+    @server.errorhandler(client.AuthenticationError)
+    def _csiapps_auth_error(error):
+        if not error.session_expired:
+            return Response(str(error), status=401)
+        return _login_navigation() if request.path == "/_dash-update-component" else redirect(
+            LOGIN_ROUTE
+        )
+
+    @server.after_request
+    def _csiapps_expired_response(response):
+        # Applies even when a callback's own error handler swallows the exception.
+        if getattr(g, "csiapps_auth_expired", False):
+            return (_login_navigation() if request.path == "/_dash-update-component"
+                    else redirect(LOGIN_ROUTE))
+        return response
+
     @server.route(REDIRECT_ROUTE)
     def _csiapps_oauth_redirect():
         code = request.args.get("code")
         if request.args.get("error") or not code:
             session.clear()
+            session[PAUSED_KEY] = "Authentication failed. Please sign in again."
             return redirect("/")
 
         state = request.args.get("state", "")
@@ -253,18 +325,28 @@ def _register_auth_routes(server):
             # Reject callbacks not initiated by this browser session, including
             # mismatches and replays, before sending anything to the token endpoint.
             session.clear()
+            session[PAUSED_KEY] = "Authentication failed. Please sign in again."
             return redirect("/")
 
-        token = auth.exchange_code_for_token(code, verifier)
+        try:
+            token = auth.exchange_code_for_token(code, verifier)
+        except Exception:
+            token = None
         access_token = token.get("access_token") if isinstance(token, dict) else None
         if not access_token:
             session.clear()
+            session[PAUSED_KEY] = "Authentication failed. Please sign in again."
             return redirect("/")
 
         # Only the access token is stored, not the whole response: the session
         # cookie has a ~4KB budget and refresh handling is out of scope.
+        session.pop(PAUSED_KEY, None)
         session[TOKEN_KEY] = access_token
-        userinfo = _load_userinfo(access_token)
+        try:
+            userinfo = _load_userinfo(access_token)
+        except client.AuthenticationError:
+            _FlaskTokenAdapter().invalidate_token(access_token)
+            return redirect(LOGIN_ROUTE)
         if userinfo:
             session[USER_KEY] = {
                 "first_name": userinfo.get("first_name"),
@@ -275,6 +357,7 @@ def _register_auth_routes(server):
     @server.route(LOGOUT_ROUTE)
     def _csiapps_logout():
         session.clear()
+        session[PAUSED_KEY] = "Signed out."
         return redirect("/")
 
 
@@ -343,6 +426,7 @@ def attach(app: Dash, public_routes: list[str] | None = None,
     if sandbox is None:
         sandbox = config.is_sandbox_mode()
 
+    server.config["CSIAPPS_SANDBOX"] = sandbox
     if sandbox:
         _warn_if_multiworker()
         return app
@@ -491,6 +575,7 @@ def layout_wrapper(*children: Component, nav_links: list[dict] | None = None,
         body = [
             html.Link(rel="stylesheet", href=CSS_ROUTE),
             _navbar(nav_links, resolved),
+            dcc.Location(id="csiapps-auth-location", refresh=True),
         ]
         if resolved:
             body.append(_sandbox_banner())
@@ -498,7 +583,7 @@ def layout_wrapper(*children: Component, nav_links: list[dict] | None = None,
             # padding-bottom leaves room for the fixed-bottom footer so it never
             # overlaps app content on short pages (mirrors ui_wrapper).
             html.Div(
-                [_auth_status(resolved), *children],
+                [_auth_status(resolved), html.Div(list(children), id="csiapps-app-body")],
                 style={"paddingBottom": "80px"},
             )
         )

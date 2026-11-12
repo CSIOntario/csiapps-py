@@ -53,6 +53,9 @@ def render(**kwargs):
 def begin_login(client_, path="/"):
     """Start the guarded login flow and return its session-bound OAuth state."""
     resp = client_.get(path)
+    if resp.headers.get("Location") == csidash.LOGIN_ROUTE:
+        client_.get(csidash.START_ROUTE)
+        resp = client_.get(path)
     return parse_qs(urlparse(resp.headers["Location"]).query)["state"][0]
 
 
@@ -611,12 +614,12 @@ def test_flask_adapter_is_inert_outside_a_request(monkeypatch):
     assert client.current_token() == "envtok"
 
 
-def test_empty_flask_token_falls_through_to_env(monkeypatch, flask_app):
-    # An empty string in the cookie is not a token; it must not mask the env var.
+def test_empty_flask_token_blocks_env(monkeypatch, flask_app):
+    # An active signed-out browser must not use the shared environment token.
     monkeypatch.setenv("CSIAPPS_ACCESS_TOKEN", "envtok")
     with flask_app.test_request_context("/"):
         flask.session[csidash.TOKEN_KEY] = ""
-        assert client.current_token() == "envtok"
+        assert client.current_token() == ""
 
 
 def test_no_token_in_a_request_is_empty_string(monkeypatch, flask_app):
@@ -636,8 +639,8 @@ def test_unreadable_session_does_not_propagate(monkeypatch):
     monkeypatch.setattr(csidash, "has_request_context", lambda: True)
     monkeypatch.setattr(csidash, "session", Boom())
     monkeypatch.setenv("CSIAPPS_ACCESS_TOKEN", "envtok")
-    assert csidash._FlaskTokenAdapter().read_token() is None
-    assert client.current_token() == "envtok"
+    assert csidash._FlaskTokenAdapter().read_token() == ""
+    assert client.current_token() == ""
 
 
 @respx.mock
@@ -661,3 +664,100 @@ def test_missing_token_in_a_request_raises_loudly(monkeypatch, flask_app):
     with flask_app.test_request_context("/"):
         with pytest.raises(RuntimeError, match="no CSIAPPS_ACCESS_TOKEN set"):
             client.make_request("api/csiauth/me/", sandbox=False)
+
+
+@pytest.mark.parametrize("caught", [False, True])
+@respx.mock
+def test_callback_expiry_clears_only_its_browser_and_navigates(prod_env, caught):
+    from dash import Input, Output, html
+    app = make_app(sandbox=False, layout=False)
+    app.layout = csidash.layout_wrapper(html.Button("Read", id="read"), html.Div(id="result"),
+                                       sandbox=False)
+    @app.callback(Output("result", "children"), Input("read", "n_clicks"))
+    def read(_):
+        try:
+            client.make_request("api/test/", sandbox=False)
+        except client.AuthenticationError:
+            if not caught:
+                raise
+        return "Old private result must not be returned"
+    respx.get(f"{SITE}/api/test/").respond(401)
+    first, second = app.server.test_client(), app.server.test_client()
+    for browser, token in [(first, "first"), (second, "second")]:
+        with browser.session_transaction() as stored:
+            stored[csidash.TOKEN_KEY] = token
+            stored[csidash.USER_KEY] = {"first_name": token}
+    response = first.post("/_dash-update-component", json={
+        "output": "result.children", "outputs": {"id": "result", "property": "children"},
+        "inputs": [{"id": "read", "property": "n_clicks", "value": 1}],
+        "changedPropIds": ["read.n_clicks"], "state": [],
+    })
+    assert response.status_code == 200
+    assert response.json["response"] == {}
+    assert response.json["sideUpdate"]["csiapps-app-body"]["children"] == []
+    assert response.json["sideUpdate"]["csiapps-auth-location"]["href"] == csidash.LOGIN_ROUTE
+    with first.session_transaction() as stored:
+        assert csidash.TOKEN_KEY not in stored
+        assert csidash.USER_KEY not in stored
+    with second.session_transaction() as stored:
+        assert stored[csidash.TOKEN_KEY] == "second"
+    assert first.get(csidash.LOGIN_ROUTE).status_code == 200
+    assert first.get("/").headers["Location"] == csidash.LOGIN_ROUTE
+
+
+def test_exchange_transport_failure_has_manual_retry(monkeypatch, prod_env):
+    def fail(*args):
+        raise httpx.ConnectError("offline")
+    monkeypatch.setattr(auth, "exchange_code_for_token", fail)
+    browser = make_app(sandbox=False).server.test_client()
+    state = begin_login(browser)
+    assert browser.get(f"/redirect?code=abc&state={state}").status_code == 302
+    assert browser.get("/").headers["Location"] == csidash.LOGIN_ROUTE
+    page = browser.get(csidash.LOGIN_ROUTE)
+    assert b"Sign in with CSI" in page.data
+    assert page.headers["Cache-Control"] == "no-store"
+    browser.get(csidash.START_ROUTE)
+    assert browser.get("/").headers["Location"].startswith(config.auth_url())
+
+
+def test_sandbox_explicitly_adopts_developer_token(monkeypatch):
+    monkeypatch.setenv("CSIAPPS_ACCESS_TOKEN", "sandbox-developer")
+    app = make_app(sandbox=True)
+    with app.server.test_request_context("/"):
+        assert client.current_token() == "sandbox-developer"
+
+
+@respx.mock
+def test_userinfo_401_clears_new_dash_login(monkeypatch, prod_env):
+    monkeypatch.setattr(auth, "exchange_code_for_token", lambda *args: {"access_token": "bad"})
+    respx.get(config.userinfo_url()).respond(401)
+    browser = make_app(sandbox=False).server.test_client()
+    state = begin_login(browser)
+    response = browser.get(f"/redirect?code=abc&state={state}")
+    assert response.headers["Location"] == csidash.LOGIN_ROUTE
+    with browser.session_transaction() as stored:
+        assert csidash.TOKEN_KEY not in stored
+
+
+def test_existing_dash_callback_error_handler_is_preserved(prod_env):
+    from dash import Input, Output, html
+    errors = []
+    def handler(error):
+        errors.append(str(error))
+        return "Application handled this"
+    app = Dash(__name__, on_error=handler)
+    csidash.attach(app, sandbox=False)
+    app.layout = csidash.layout_wrapper(html.Button(id="go"), html.Div(id="answer"))
+    @app.callback(Output("answer", "children"), Input("go", "n_clicks"))
+    def fail(_):
+        raise ValueError("app-specific failure")
+    browser = app.server.test_client()
+    with browser.session_transaction() as stored:
+        stored[csidash.TOKEN_KEY] = "valid"
+    response = browser.post("/_dash-update-component", json={
+        "output": "answer.children", "outputs": {"id": "answer", "property": "children"},
+        "inputs": [{"id": "go", "property": "n_clicks", "value": 1}],
+        "changedPropIds": ["go.n_clicks"], "state": [],
+    })
+    assert errors == ["app-specific failure"]
+    assert response.json["response"]["answer"]["children"] == "Application handled this"

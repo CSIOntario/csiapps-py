@@ -28,6 +28,7 @@ try:
     import streamlit as st
     from cryptography.exceptions import InvalidTag
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    from streamlit.runtime.scriptrunner import get_script_run_ctx
 except ImportError as exc:  # pragma: no cover - exercised by no-extra CI
     raise ImportError(
         "csiapps.streamlit requires the optional Streamlit dependencies, which "
@@ -40,6 +41,8 @@ except ImportError as exc:  # pragma: no cover - exercised by no-extra CI
 COOKIE_NAME = "csiapps_oauth_nonce"
 SESSION_KEY = "_csiapps_streamlit_session"
 LOGIN_PAUSED_KEY = "_csiapps_streamlit_login_paused"
+EXPIRED_KEY = "_csiapps_streamlit_expired"
+SANDBOX_TOKEN_KEY = "_csiapps_streamlit_sandbox_token"
 LOGOUT_PARAM = "csiapps_logout"
 AUTH_TTL_SECONDS = 10 * 60
 MIN_SECRET_KEY_BYTES = 32
@@ -58,6 +61,8 @@ def _streamlit_session() -> dict | None:
     expires_at = session.get("expires_at")
     if isinstance(expires_at, (int, float)) and time.time() >= expires_at:
         st.session_state.pop(SESSION_KEY, None)
+        st.session_state[LOGIN_PAUSED_KEY] = True
+        st.session_state[EXPIRED_KEY] = True
         return None
     return session
 
@@ -66,8 +71,22 @@ class _StreamlitTokenAdapter:
     """Resolve the token for the current Streamlit WebSocket session."""
 
     def read_token(self):
+        if get_script_run_ctx(suppress_warning=True) is None:
+            return None
         session = _streamlit_session()
-        return session.get("access_token") if session else None
+        return (session.get("access_token") if session else
+                st.session_state.get(SANDBOX_TOKEN_KEY, ""))
+
+    def invalidate_token(self, token) -> bool:
+        if get_script_run_ctx(suppress_warning=True) is None:
+            return False
+        session = st.session_state.get(SESSION_KEY)
+        if not isinstance(session, dict) or session.get("access_token") != token:
+            return False
+        st.session_state.pop(SESSION_KEY, None)
+        st.session_state[LOGIN_PAUSED_KEY] = True
+        st.session_state[EXPIRED_KEY] = True
+        return True
 
     def handle_missing_token(self) -> bool:
         # page_wrapper stops the script before protected app logic can run.
@@ -242,12 +261,16 @@ def _userinfo(access_token: str) -> dict | None:
             follow_redirects=True,
             timeout=20,
         )
+        if response.status_code == 401:
+            raise client.AuthenticationError("User information request rejected credentials (401)")
         response.raise_for_status()
         payload = response.json()
         return {
             "first_name": payload.get("first_name"),
             "last_name": payload.get("last_name"),
         }
+    except client.AuthenticationError:
+        raise
     except Exception:
         return None
 
@@ -349,12 +372,18 @@ def _finish_login(secret_key: str, redirect_uri: str) -> str | None:
         _set_query(_without_auth_query(query))
         return "CSIAPPS token exchange failed. Please try signing in again."
 
-    session = {"access_token": access_token, "user": _userinfo(access_token)}
+    try:
+        user = _userinfo(access_token)
+    except client.AuthenticationError:
+        _set_query(_without_auth_query(query))
+        return "Your session has expired. Please sign in again."
+    session = {"access_token": access_token, "user": user}
     expires_in = token.get("expires_in")
     if isinstance(expires_in, (int, float)) and expires_in > 0:
         session["expires_at"] = time.time() + expires_in
     st.session_state[SESSION_KEY] = session
     st.session_state.pop(LOGIN_PAUSED_KEY, None)
+    st.session_state.pop(EXPIRED_KEY, None)
     _set_query(
         {
             str(key): str(value)
@@ -378,6 +407,8 @@ def _authenticate() -> dict:
     if session:
         return session
 
+    if st.session_state.pop(EXPIRED_KEY, False):
+        st.error("Your session has expired. Please sign in again.")
     error = _finish_login(secret_key, redirect_uri)
     if error:
         st.session_state[LOGIN_PAUSED_KEY] = True
@@ -489,11 +520,21 @@ def page_wrapper(
     st.set_page_config(page_icon=chrome.FAVICON)
     if resolved:
         _warn_if_multiworker()
+        st.session_state[SANDBOX_TOKEN_KEY] = auth.seed_sandbox_token().get("access_token", "")
         session = None
     else:
+        st.session_state.pop(SANDBOX_TOKEN_KEY, None)
         session = _authenticate()
     st.html(_chrome_html(resolved, session))
-    app_specific_logic()
+    try:
+        app_specific_logic()
+    except client.AuthenticationError as error:
+        if not error.session_expired:
+            raise
+    finally:
+        # Also recover when an app catches the request error itself.
+        if not resolved and st.session_state.get(EXPIRED_KEY):
+            st.rerun()
     st.html(_footer_html())
 
 

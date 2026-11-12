@@ -50,8 +50,9 @@ def quarto_setup(
 
         @reactive.effect
         async def _initialize_quarto():
-            if not sandbox:
-                req(client.token_ready())
+            if not sandbox and not client.token_ready():
+                initialized.set(False)
+                return
             req(not initialized())
             if not body_path.is_file():
                 raise FileNotFoundError(f"Protected Quarto body not found: {body_path}")

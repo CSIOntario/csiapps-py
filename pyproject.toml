@@ -1,6 +1,6 @@
 [project]
 name = "csiapps"
-version = "0.5.0"
+version = "0.5.1"
 description = "Helper functions for CSI data warehouse ingestion, web applications, and authenticated interactive Quarto documents."
 readme = "README.md"
 license = { file = "LICENSE" }

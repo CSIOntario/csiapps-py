@@ -54,11 +54,11 @@ def test_first_adapter_with_a_token_wins(clean_registry):
     assert current_token() == "second"
 
 
-def test_empty_adapter_token_falls_through_to_env(clean_registry, monkeypatch):
-    # An empty string is not a token; it must not mask the env var.
+def test_empty_active_adapter_blocks_env(clean_registry, monkeypatch):
+    # An active signed-out context must mask the shared process token.
     monkeypatch.setenv("CSIAPPS_ACCESS_TOKEN", "envtok")
     client.register_token_adapter(FakeAdapter(token=""))
-    assert current_token() == "envtok"
+    assert current_token() == ""
 
 
 def test_no_token_anywhere_is_empty_string(clean_registry, monkeypatch):
