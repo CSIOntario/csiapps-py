@@ -156,8 +156,9 @@ def _load_userinfo(access_token):
             follow_redirects=True,
             timeout=20,
         )
-        if resp.status_code == 401:
-            raise client.AuthenticationError("User information request rejected credentials (401)")
+        if client._is_authentication_failure(resp):
+            raise client.AuthenticationError(
+                f"User information request rejected credentials ({resp.status_code})")
         resp.raise_for_status()
         return resp.json()
     except client.AuthenticationError:

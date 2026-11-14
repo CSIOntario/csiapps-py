@@ -399,7 +399,7 @@ def server_wrapper(
                         headers={"Authorization": f"Bearer {access_token}"},
                         follow_redirects=True,
                     )
-                    if resp.status_code == 401:
+                    if client._is_authentication_failure(resp):
                         _ShinyTokenAdapter().invalidate_token(access_token)
                         return
                     resp.raise_for_status()

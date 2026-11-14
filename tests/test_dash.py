@@ -666,9 +666,13 @@ def test_missing_token_in_a_request_raises_loudly(monkeypatch, flask_app):
             client.make_request("api/csiauth/me/", sandbox=False)
 
 
+@pytest.mark.parametrize("status,payload", [
+    (401, {}),
+    (403, {"detail": "Authentication credentials were not provided."}),
+])
 @pytest.mark.parametrize("caught", [False, True])
 @respx.mock
-def test_callback_expiry_clears_only_its_browser_and_navigates(prod_env, caught):
+def test_callback_expiry_clears_only_its_browser_and_navigates(prod_env, caught, status, payload):
     from dash import Input, Output, html
     app = make_app(sandbox=False, layout=False)
     app.layout = csidash.layout_wrapper(html.Button("Read", id="read"), html.Div(id="result"),
@@ -681,7 +685,7 @@ def test_callback_expiry_clears_only_its_browser_and_navigates(prod_env, caught)
             if not caught:
                 raise
         return "Old private result must not be returned"
-    respx.get(f"{SITE}/api/test/").respond(401)
+    respx.get(f"{SITE}/api/test/").respond(status, json=payload)
     first, second = app.server.test_client(), app.server.test_client()
     for browser, token in [(first, "first"), (second, "second")]:
         with browser.session_transaction() as stored:
@@ -727,10 +731,14 @@ def test_sandbox_explicitly_adopts_developer_token(monkeypatch):
         assert client.current_token() == "sandbox-developer"
 
 
+@pytest.mark.parametrize("status,payload", [
+    (401, {}),
+    (403, {"detail": "Authentication credentials were not provided."}),
+])
 @respx.mock
-def test_userinfo_401_clears_new_dash_login(monkeypatch, prod_env):
+def test_userinfo_rejection_clears_new_dash_login(monkeypatch, prod_env, status, payload):
     monkeypatch.setattr(auth, "exchange_code_for_token", lambda *args: {"access_token": "bad"})
-    respx.get(config.userinfo_url()).respond(401)
+    respx.get(config.userinfo_url()).respond(status, json=payload)
     browser = make_app(sandbox=False).server.test_client()
     state = begin_login(browser)
     response = browser.get(f"/redirect?code=abc&state={state}")
@@ -761,3 +769,35 @@ def test_existing_dash_callback_error_handler_is_preserved(prod_env):
     })
     assert errors == ["app-specific failure"]
     assert response.json["response"]["answer"]["children"] == "Application handled this"
+
+
+@pytest.mark.parametrize("detail", [
+    "Please select an active profile to continue.",
+    "You do not have permission to perform this action.",
+])
+@respx.mock
+def test_permission_denied_callback_keeps_browser_signed_in(prod_env, detail):
+    from dash import Input, Output, html
+    app = make_app(sandbox=False, layout=False)
+    app.layout = csidash.layout_wrapper(html.Button("Read", id="read"), html.Div(id="result"),
+                                       sandbox=False)
+    @app.callback(Output("result", "children"), Input("read", "n_clicks"))
+    def read(_):
+        try:
+            client.make_request("api/test/", sandbox=False)
+        except RuntimeError as error:
+            return str(error)
+    respx.get(f"{SITE}/api/test/").respond(403, json={"detail": detail})
+    browser = app.server.test_client()
+    with browser.session_transaction() as stored:
+        stored[csidash.TOKEN_KEY] = "valid-token"
+    response = browser.post("/_dash-update-component", json={
+        "output": "result.children", "outputs": {"id": "result", "property": "children"},
+        "inputs": [{"id": "read", "property": "n_clicks", "value": 1}],
+        "changedPropIds": ["read.n_clicks"], "state": [],
+    })
+    assert response.status_code == 200
+    assert detail in response.json["response"]["result"]["children"]
+    assert "sideUpdate" not in response.json
+    with browser.session_transaction() as stored:
+        assert stored[csidash.TOKEN_KEY] == "valid-token"

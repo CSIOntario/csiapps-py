@@ -52,7 +52,11 @@ def status(runtime):
         return str(runtime.outputs["auth_status"]())
 
 
-def test_login_expiry_and_manual_sign_in(runtime):
+@pytest.mark.parametrize("http_status,payload", [
+    (401, {}),
+    (403, {"detail": "Authentication credentials were not provided."}),
+])
+def test_login_expiry_and_manual_sign_in(runtime, http_status, payload):
     wrapper.server_wrapper(lambda *args: None, sandbox=False)(
         runtime.inputs, None, runtime.session)
     async def drive():
@@ -61,7 +65,7 @@ def test_login_expiry_and_manual_sign_in(runtime):
         assert "Ada" in status(runtime)
         assert ("csiapps_clean_query", {}) in runtime.sent
         assert not any(name == "csip_reset" for name, _ in runtime.sent)
-        runtime.http.get("https://apps.csipacific.ca/api/test/").respond(401)
+        runtime.http.get("https://apps.csipacific.ca/api/test/").respond(http_status, json=payload)
         with pytest.raises(client.AuthenticationError):
             client.make_request("api/test/", sandbox=False)
         await reactive.flush()
@@ -131,8 +135,12 @@ def test_two_viewers_reject_only_matching_token(runtime, monkeypatch):
     assert client.current_token() == "user-b"
 
 
-def test_userinfo_401_invalidates_login(runtime):
-    runtime.http.get(config.userinfo_url()).respond(401)
+@pytest.mark.parametrize("http_status,payload", [
+    (401, {}),
+    (403, {"detail": "Authentication credentials were not provided."}),
+])
+def test_userinfo_rejection_invalidates_login(runtime, http_status, payload):
+    runtime.http.get(config.userinfo_url()).respond(http_status, json=payload)
     wrapper.server_wrapper(lambda *args: None, sandbox=False)(
         runtime.inputs, None, runtime.session)
     async def drive():
