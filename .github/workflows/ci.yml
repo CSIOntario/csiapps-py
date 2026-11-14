@@ -55,12 +55,20 @@ jobs:
   # shiny: install [shiny] only. Other frameworks must be absent.
   shiny:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        shiny-version: ["1.6.3", "latest"]
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
         uses: astral-sh/setup-uv@v3
-      - name: Install shiny extra only
-        run: uv sync --no-group dash-tests --no-group streamlit-tests
+      - name: Install shiny extra only (deployment Python)
+        run: uv sync --no-group dash-tests --no-group streamlit-tests --python 3.11 --upgrade-package shiny
+      - name: Install compatibility Shiny version
+        if: matrix.shiny-version != 'latest'
+        run: uv pip install --python .venv/bin/python "shiny==${{ matrix.shiny-version }}"
+      - name: Report Shiny version
+        run: uv run --no-sync python -c "import importlib.metadata as m; print('Shiny', m.version('shiny'))"
       - name: Assert other frameworks are genuinely absent
         run: |
           uv run --no-sync python -c "
@@ -79,7 +87,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
       - name: Install Quarto extra only
-        run: uv sync --no-default-groups --group dev --group quarto-tests
+        run: uv sync --no-default-groups --group dev --group quarto-tests --python 3.11 --upgrade-package shiny
       - name: Assert the Quarto boundary
         run: |
           uv run --no-sync python -c "

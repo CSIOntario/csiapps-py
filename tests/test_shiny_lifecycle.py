@@ -1,5 +1,6 @@
 """Exercise the actual wrapper effects with Shiny's reactive scheduler."""
 import asyncio
+import threading
 from types import SimpleNamespace
 
 import httpx
@@ -16,10 +17,13 @@ from csiapps import shiny as wrapper  # noqa: E402
 @pytest.fixture
 def runtime(monkeypatch):
     effects, outputs, sent = [], {}, []
+    functions, named_effects = {}, {}
     effect = reactive.effect
     def track(fn):
         result = effect(fn, session=None)
         effects.append(result)
+        functions[fn.__name__] = fn
+        named_effects[fn.__name__] = result
         return result
     def render(fn):
         outputs[fn.__name__] = fn
@@ -42,7 +46,8 @@ def runtime(monkeypatch):
         http.get(config.userinfo_url()).respond(
             200, json={"first_name": "Ada", "last_name": "Lovelace"})
         yield SimpleNamespace(session=session, inputs=inputs, outputs=outputs,
-                              sent=sent, search=search, http=http)
+                              sent=sent, search=search, http=http,
+                              functions=functions, effects=named_effects)
     for instance in effects:
         instance.destroy()
 
@@ -167,4 +172,79 @@ def test_quarto_removes_body_on_expiry_and_paused_logout(runtime, tmp_path, monk
         runtime.sent.clear()
         await reactive.flush()
         assert not any(name == "csiapps_quarto_init" for name, _ in runtime.sent)
+    asyncio.run(drive())
+
+
+@pytest.mark.parametrize("sandbox", [False, True])
+def test_login_publishes_session_token_before_success(runtime, monkeypatch, sandbox):
+    value = reactive.value
+    observed = []
+    created = 0
+
+    def create(*args, **kwargs):
+        nonlocal created
+        rv = value(*args, **kwargs)
+        created += 1
+        if created == 1:  # user_token, the login result observed by other effects
+            original_set = rv.set
+            def publish(tok):
+                if tok and tok.get("access_token"):
+                    observed.append((tok["access_token"], client.current_token()))
+                return original_set(tok)
+            monkeypatch.setattr(rv, "set", publish)
+        return rv
+
+    monkeypatch.setattr(reactive, "value", create)
+    wrapper.server_wrapper(lambda *args: None, sandbox=sandbox)(
+        runtime.inputs, None, runtime.session)
+    asyncio.run(reactive.flush())
+    token = "console-token" if sandbox else "user-a"
+    assert observed == [(token, token)]
+    assert not any(name == "csiapps_quarto_signed_out" for name, _ in runtime.sent)
+
+
+@pytest.mark.parametrize("pause", [False, True])
+@pytest.mark.parametrize("pending", ["exchange", "userinfo"])
+def test_logout_discards_inflight_login(runtime, monkeypatch, pause, pending):
+    started, release = threading.Event(), threading.Event()
+
+    def wait():
+        started.set()
+        if not release.wait(timeout=5):
+            raise TimeoutError("test did not release the pending login")
+
+    if pending == "exchange":
+        def exchange(*args):
+            wait()
+            return {"access_token": "user-a"}
+        monkeypatch.setattr(auth, "exchange_code_for_token", exchange)
+    else:
+        def userinfo(request):
+            wait()
+            return httpx.Response(200, json={"first_name": "Ada", "last_name": "Lovelace"})
+        runtime.http.get(config.userinfo_url()).mock(side_effect=userinfo)
+
+    wrapper.server_wrapper(lambda *args: None, sandbox=False, pause_on_logout=pause)(
+        runtime.inputs, None, runtime.session)
+    # Drive logout directly while the scheduler is awaiting login, on old and new Shiny.
+    runtime.effects["_logout"].suspend()
+
+    async def drive():
+        flush = asyncio.create_task(reactive.flush())
+        try:
+            assert await asyncio.to_thread(started.wait, 5)
+            runtime.inputs.logout.set(1)
+            with reactive.isolate():
+                await runtime.functions["_logout"]()
+            runtime.sent.clear()
+        finally:
+            release.set()
+            await flush
+        await reactive.flush()
+        assert not client.token_ready()
+        assert "Signed out" in status(runtime)
+        assert not any(name == "csiapps_auth" and payload["authenticated"]
+                       for name, payload in runtime.sent)
+        assert not any(name == "csiapps_clean_query" for name, _ in runtime.sent)
+
     asyncio.run(drive())
