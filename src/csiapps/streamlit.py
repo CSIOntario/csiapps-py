@@ -261,8 +261,9 @@ def _userinfo(access_token: str) -> dict | None:
             follow_redirects=True,
             timeout=20,
         )
-        if response.status_code == 401:
-            raise client.AuthenticationError("User information request rejected credentials (401)")
+        if client._is_authentication_failure(response):
+            raise client.AuthenticationError(
+                f"User information request rejected credentials ({response.status_code})")
         response.raise_for_status()
         payload = response.json()
         return {

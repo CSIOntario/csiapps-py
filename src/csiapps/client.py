@@ -115,6 +115,22 @@ class AuthenticationError(RuntimeError):
         self.session_expired = session_expired
 
 
+def _is_authentication_failure(response):
+    if response.status_code == 401:
+        return True
+    if response.status_code != 403:
+        return False
+    try:
+        payload = response.json()
+    except ValueError:
+        return False
+    # This API can report rejected credentials as 403; other denials stay permissions errors.
+    return isinstance(payload, dict) and payload.get("detail") in (
+        "Authentication credentials were not provided.",
+        "Invalid token.",
+    )
+
+
 def _invalidate_token(token):
     for adapter in _token_adapters:
         if adapter.read_token() is not None:
@@ -136,7 +152,7 @@ def _perform(method, url, *, params=None, json=None, headers=None, timeout=20,
             follow_redirects=True,
         )
         # Authentication failures must reach session invalidation immediately.
-        if resp.status_code == 401 or attempt == max_tries - 1:
+        if _is_authentication_failure(resp) or attempt == max_tries - 1:
             return resp
         retry = (resp.status_code in _RETRY_STATUSES if is_transient is None
                  else is_transient(resp))
@@ -150,7 +166,7 @@ def _parse_response(resp, *, endpoint="", method="GET", query=None, verbose=Fals
     status = resp.status_code
     txt = resp.text
     if status >= 400:
-        error = AuthenticationError if status == 401 else RuntimeError
+        error = AuthenticationError if _is_authentication_failure(resp) else RuntimeError
         raise error(f"API request failed ({status}): {txt}")
     if not txt:
         return []

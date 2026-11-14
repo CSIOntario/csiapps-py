@@ -51,13 +51,19 @@ def test_error_status_precedes_empty_body(session_adapter, status, body):
         assert not client.token_ready()
 
 
+@pytest.mark.parametrize("status,payload", [
+    (401, {}),
+    (403, {"detail": "Authentication credentials were not provided."}),
+])
 @pytest.mark.parametrize("kind", ["explicit", "header", "replacement"])
 @respx.mock
-def test_unrelated_or_old_rejection_does_not_clear_session(session_adapter, kind):
+def test_unrelated_or_old_rejection_does_not_clear_session(
+    session_adapter, kind, status, payload,
+):
     def reject(request):
         if kind == "replacement":
             session_adapter.token = "new-token"
-        return httpx.Response(401)
+        return httpx.Response(status, json=payload)
     respx.get(URL).mock(side_effect=reject)
     kwargs = ({"token": "other-token"} if kind == "explicit" else
               {"headers": {"authorization": "Bearer other-token"}} if kind == "header" else {})
@@ -188,3 +194,35 @@ def test_public_and_confidential_pkce_clients(monkeypatch, secret):
     assert parse_qs(request.content.decode())["client_id"] == ["client-id"]
     assert parse_qs(request.content.decode())["code_verifier"] == ["verifier"]
     assert ("authorization" in request.headers) == bool(secret)
+
+
+@pytest.mark.parametrize("detail", [
+    "Authentication credentials were not provided.",
+    "Invalid token.",
+])
+@respx.mock
+def test_explicit_authentication_403_clears_session_without_retry(session_adapter, detail):
+    route = respx.get(URL).respond(403, json={"detail": detail})
+    with pytest.raises(AuthenticationError) as error:
+        client.make_request("api/records/", sandbox=False, retry_is_transient=lambda _: True)
+    assert error.value.session_expired
+    assert not client.token_ready()
+    assert route.call_count == 1
+
+
+@pytest.mark.parametrize("body", [
+    b'{"detail":"Please select an active profile to continue."}',
+    b'{"detail":"You do not have permission to perform this action."}',
+    b'{"detail":"Invalid token permissions for this resource."}',
+    b'{"detail":["Authentication credentials were not provided."]}',
+    b'["Authentication credentials were not provided."]',
+    b'Authentication credentials were not provided.',
+    b'',
+])
+@respx.mock
+def test_other_403_responses_preserve_session(session_adapter, body):
+    respx.get(URL).respond(403, content=body)
+    with pytest.raises(RuntimeError) as error:
+        client.make_request("api/records/", sandbox=False)
+    assert not isinstance(error.value, AuthenticationError)
+    assert client.current_token() == "session-token"

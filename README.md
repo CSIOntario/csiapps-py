@@ -202,8 +202,11 @@ Shipping a change to the package? Follow
 
 Browser sessions now use only their own access token. `CSIAPPS_ACCESS_TOKEN`
 remains available to command-line scripts and explicit sandbox identity seeding;
-it is not a production browser-session fallback. A 401 clears only the session
-whose credentials were rejected. A 403 does not sign the user out.
+it is not a production browser-session fallback. A 401, or a 403 explicitly
+reporting missing credentials or an invalid token, clears only the session whose
+credentials were rejected and offers sign-in again. Other 403 responses,
+including permission denials and requests to select an active profile, preserve
+the session.
 
 Shiny, Dash, Streamlit and Quarto provide sign-in recovery after rejection.
 Public OAuth PKCE clients may omit `CSIAPPS_CLIENT_SECRET`; Dash and Streamlit
