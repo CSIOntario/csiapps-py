@@ -315,15 +315,22 @@ def server_wrapper(
         user_token = reactive.value(None)
         userinfo = reactive.value(None)
         logged_out = reactive.value(False)
+        auth_generation = 0
+
+        def _set_user_token(tok):
+            # Publish both values together before concurrent effects can observe them.
+            set_session_token(session, tok.get("access_token") if tok else None)
+            user_token.set(tok)
 
         if sandbox:
             # Simulate the redirect: seed the token from the environment and hand
             # it to the same consumer a production login would.
-            user_token.set(auth.seed_sandbox_token())
+            _set_user_token(auth.seed_sandbox_token())
         else:
 
             @reactive.effect
             async def _oauth():
+                nonlocal auth_generation
                 if logged_out() or user_token() is not None:
                     return
                 qs = parse_qs(session.clientdata.url_search().lstrip("?"))
@@ -332,10 +339,9 @@ def server_wrapper(
                 err = qs.get("error", [None])[0]
 
                 if err:
-                    user_token.set(
+                    _set_user_token(
                         {"error": err, "error_description": qs.get("error_description", [None])[0]}
                     )
-                    set_session_token(session, None)
                     return
 
                 # 1) no code + no token -> redirect to CSI
@@ -358,6 +364,8 @@ def server_wrapper(
 
                 # 2) have code but no token yet -> exchange
                 if code is not None and user_token() is None:
+                    auth_generation += 1
+                    attempt = auth_generation
                     try:
                         verifier = auth.pkce_state_decode(state).get("v") if state else None
                         if not verifier:
@@ -367,15 +375,15 @@ def server_wrapper(
                             tok = {"error": "token_exchange_failed"}
                     except Exception:
                         tok = {"error": "token_exchange_failed"}
-                    user_token.set(tok)
+                    # A late exchange must not undo logout or a newer login attempt.
+                    if attempt == auth_generation:
+                        _set_user_token(tok)
 
-        # Shared consumer (production + sandbox): store the token per-session and
-        # load /me for the header.
+        # Shared consumer (production + sandbox): load /me for the header.
         @reactive.effect
         @reactive.event(user_token)
         async def _consume():
             tok = user_token()
-            set_session_token(session, None)
 
             if tok is None or tok.get("error"):
                 return
@@ -384,7 +392,6 @@ def server_wrapper(
             if not access_token:
                 return
 
-            set_session_token(session, access_token)
             if not sandbox:
                 await session.send_custom_message("csiapps_clean_query", {})
 
@@ -417,7 +424,7 @@ def server_wrapper(
                 expired = not ready and bool(tok and tok.get("access_token"))
             if expired:
                 userinfo.set(None)
-                user_token.set({"error": "session_expired"})
+                _set_user_token({"error": "session_expired"})
                 await session.send_custom_message("csiapps_quarto_signed_out", {})
             await session.send_custom_message(
                 "csiapps_auth", {"authenticated": ready or sandbox, "expired": expired}
@@ -452,19 +459,19 @@ def server_wrapper(
         @reactive.effect
         @reactive.event(input.logout, ignore_none=True)
         async def _logout():
+            nonlocal auth_generation
+            auth_generation += 1
+            logged_out.set(pause_on_logout or not sandbox)
             userinfo.set(None)
-            set_session_token(session, None)
+            _set_user_token(None)
             if pause_on_logout:
                 await session.send_custom_message(
                     "csiapps_auth", {"authenticated": False, "expired": True}
                 )
-                logged_out.set(True)
-                user_token.set(None)
                 await session.send_custom_message("csiapps_quarto_signed_out", {})
             elif sandbox:
-                user_token.set(auth.seed_sandbox_token())
+                _set_user_token(auth.seed_sandbox_token())
             else:
-                user_token.set(None)
                 await session.send_custom_message("csip_reset", {})
 
         # Call the app's own server function so it keeps its lexical scope.
